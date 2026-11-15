@@ -69,7 +69,7 @@ export interface ExifSummary {
 
 export interface ForensicReport {
   filename: string;
-  mediaType: "image" | "video";
+  mediaType: "image" | "video" | "document";
   containerFormat: string;
   byteSize: number;
   sha256: string;

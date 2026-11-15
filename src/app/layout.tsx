@@ -8,7 +8,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "EXIF // FORGE — AI Metadata Remover & Camera Telemetry Studio",
   description:
-    "Purge C2PA, JUMBF, XMP, and diffusion generation metadata via raw pixel re-encoding and embed authentic optical camera EXIF & QuickTime telemetry.",
+    "Purge C2PA, JUMBF, XMP, and diffusion generation metadata from images, videos, and documents (PDF, DOCX, EPUB, TXT…) via raw pixel re-encoding and embed authentic optical camera EXIF & QuickTime telemetry. No upload size limits.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

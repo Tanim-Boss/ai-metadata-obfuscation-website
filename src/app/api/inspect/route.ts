@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { inspectMediaBuffer } from "@/lib/metadata-inspector";
+import { inspectDocumentBuffer, isDocumentBuffer } from "@/lib/document-inspector";
 
 export const dynamic = "force-dynamic";
+
+// Accept arbitrarily large uploads — the tool is designed for "any size, no
+// limitations", so we deliberately impose no body-size cap here.
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
@@ -10,7 +15,7 @@ export async function POST(request: Request) {
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json(
-        { error: "Please attach an image or video file to inspect." },
+        { error: "Please attach an image, video, or document file to inspect." },
         { status: 400 }
       );
     }
@@ -23,10 +28,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const report = await inspectMediaBuffer(
-      Buffer.from(arrayBuf),
-      file.name || "upload"
-    );
+    const buffer = Buffer.from(arrayBuf);
+    const name = file.name || "upload";
+
+    const report = isDocumentBuffer(buffer, name)
+      ? await inspectDocumentBuffer(buffer, name)
+      : await inspectMediaBuffer(buffer, name);
 
     return NextResponse.json({ report });
   } catch (err) {

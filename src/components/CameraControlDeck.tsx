@@ -30,7 +30,7 @@ interface CameraControlDeckProps {
   onProcessAll?: () => void;
   isProcessing: boolean;
   hasActiveFile: boolean;
-  activeMediaType: "image" | "video" | null;
+  activeMediaType: "image" | "video" | "document" | null;
   queueCount: number;
   unprocessedCount: number;
 }
@@ -118,9 +118,20 @@ export function CameraControlDeck({
   const currentFocal = options.focalLengthMm ?? lens.defaultFocalMm;
   const equiv35mm = compute35mmEquivalent(currentFocal, profile);
   const isVideo = activeMediaType === "video";
+  const isDocument = activeMediaType === "document";
 
   return (
     <div className="space-y-4">
+      {isDocument && (
+        <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3.5 text-xs text-sky-200">
+          <p className="font-semibold text-sky-100">Document mode</p>
+          <p className="mt-1 text-sky-200/80">
+            Documents are sanitized by stripping embedded author, creator,
+            producer &amp; provenance metadata (PDF Info/XMP, Office docProps,
+            EPUB OPF). Camera EXIF injection does not apply.
+          </p>
+        </div>
+      )}
       {/* 1. CAMERA BODY SELECTOR */}
       <div className="rounded-xl border border-[#232834] bg-[#111318] p-4">
         <div className="flex items-center justify-between mb-3">
@@ -771,7 +782,11 @@ export function CameraControlDeck({
           }`}
         >
           {isProcessing
-            ? "Sanitizing Bitstream & Injecting Camera IFDs…"
+            ? activeMediaType === "document"
+              ? "Scrubbing Document Metadata…"
+              : "Sanitizing Bitstream & Injecting Camera IFDs…"
+            : activeMediaType === "document"
+            ? "Purge Document Metadata"
             : "Purge AI Metadata & Inject Camera Telemetry"}
         </button>
 
