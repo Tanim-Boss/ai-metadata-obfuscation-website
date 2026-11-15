@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import JSZip from "jszip";
 import {
   Upload,
   Download,
@@ -18,40 +17,24 @@ import {
   Lock,
   Eye,
 } from "lucide-react";
-import {
-  CAMERA_PROFILES,
-  compute35mmEquivalent,
-  getCameraProfile,
-  getLensForProfile,
-  type TelemetryOptions,
-} from "@/lib/camera-profiles";
 import type { ForensicReport } from "@/lib/metadata-inspector";
+import { detectSignatureFromName, FILE_INPUT_ACCEPT, type FileKind } from "@/lib/file-formats";
 import { ForensicInspector } from "@/components/ForensicInspector";
-import { CameraControlDeck } from "@/components/CameraControlDeck";
 
 interface QueuedAsset {
   id: string;
   file: File;
-  mediaType: "image" | "video";
+  mediaType: FileKind;
   previewUrl: string;
   isInspecting: boolean;
   isProcessing: boolean;
   beforeReport: ForensicReport | null;
   afterReport: ForensicReport | null;
-  processedBlob: Blob | null;
   processedUrl: string | null;
   processedFilename: string | null;
   error: string | null;
 }
 
-function detectMediaType(file: File): "image" | "video" | null {
-  if (file.type.startsWith("image/")) return "image";
-  if (file.type.startsWith("video/")) return "video";
-  const lower = file.name.toLowerCase();
-  if (/\.(jpg|jpeg|png|webp|avif|tiff|tif)$/i.test(lower)) return "image";
-  if (/\.(mp4|mov|m4v)$/i.test(lower)) return "video";
-  return null;
-}
 
 function base64ToBlob(base64: string, mimeType: string): Blob {
   const binStr = atob(base64);
@@ -69,30 +52,6 @@ function formatBytes(bytes: number): string {
 }
 
 export default function HomePage() {
-  const defaultProfile = CAMERA_PROFILES[0];
-  const defaultLens = defaultProfile.lenses[0];
-
-  const [options, setOptions] = useState<TelemetryOptions>({
-    profileId: defaultProfile.id,
-    lensId: defaultLens.id,
-    focalLengthMm: defaultLens.defaultFocalMm,
-    fNumber: defaultLens.defaultFNumber,
-    shutterSpeed: "1/250",
-    iso: defaultProfile.baseIso,
-    exposureBiasEv: 0,
-    exposureProgram: 3,
-    meteringMode: 5,
-    whiteBalance: 0,
-    flash: 16,
-    timezoneOffset: "+00:00",
-    includeSerialNumbers: true,
-    gpsMode: "none",
-    outputFormat: "jpeg",
-    jpegQuality: 96,
-    renameToCameraConvention: true,
-    addSensorGrain: false,
-  });
-
   const [queue, setQueue] = useState<QueuedAsset[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -110,11 +69,13 @@ export default function HomePage() {
 
   const inspectQueuedFile = useCallback(async (assetId: string, file: File) => {
     try {
-      const formData = new FormData();
-      formData.append("file", file);
       const res = await fetch("/api/inspect", {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+          "X-File-Name": encodeURIComponent(file.name),
+        },
+        body: file,
       });
       const data = await res.json();
       if (!res.ok) {
@@ -147,13 +108,7 @@ export default function HomePage() {
       const validAssets: QueuedAsset[] = [];
 
       for (const f of incoming) {
-        const mediaType = detectMediaType(f);
-        if (!mediaType) {
-          setGlobalError(
-            `Skipped "${f.name}" — supported formats: JPG, PNG, WebP, AVIF, MP4, MOV.`
-          );
-          continue;
-        }
+        const { kind: mediaType } = detectSignatureFromName(f.name, f.type);
         const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         validAssets.push({
           id,
@@ -164,7 +119,6 @@ export default function HomePage() {
           isProcessing: false,
           beforeReport: null,
           afterReport: null,
-          processedBlob: null,
           processedUrl: null,
           processedFilename: null,
           error: null,
@@ -208,7 +162,6 @@ export default function HomePage() {
         isProcessing: false,
         beforeReport: data.report,
         afterReport: null,
-        processedBlob: null,
         processedUrl: null,
         processedFilename: null,
         error: null,
@@ -227,7 +180,7 @@ export default function HomePage() {
   };
 
   const processSingleAsset = useCallback(
-    async (asset: QueuedAsset, currentOptions: TelemetryOptions) => {
+    async (asset: QueuedAsset) => {
       setQueue((prev) =>
         prev.map((item) =>
           item.id === asset.id
@@ -237,28 +190,34 @@ export default function HomePage() {
       );
 
       try {
-        const endpoint =
-          asset.mediaType === "video"
-            ? "/api/process/video"
-            : "/api/process/image";
-
-        const formData = new FormData();
-        formData.append("file", asset.file);
-        formData.append("profile", currentOptions.profileId);
-        formData.append("options", JSON.stringify(currentOptions));
-        formData.append("responseMode", "json");
-
-        const res = await fetch(endpoint, {
+        const res = await fetch("/api/process/file", {
           method: "POST",
-          body: formData,
+          headers: {
+            "Content-Type": asset.file.type || "application/octet-stream",
+            "X-File-Name": encodeURIComponent(asset.file.name),
+          },
+          body: asset.file,
         });
-        const data = await res.json();
         if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "Processing failed");
         }
 
-        const outBlob = base64ToBlob(data.dataBase64, data.mimeType);
+        const outBlob = await res.blob();
+        const outputFilename = decodeURIComponent(
+          res.headers.get("X-File-Name") || `${asset.file.name}_clean`
+        );
         const outUrl = URL.createObjectURL(outBlob);
+        const afterRes = await fetch("/api/inspect", {
+          method: "POST",
+          headers: {
+            "Content-Type": outBlob.type || asset.file.type || "application/octet-stream",
+            "X-File-Name": encodeURIComponent(outputFilename),
+          },
+          body: outBlob,
+        });
+        const afterData = await afterRes.json();
+        if (!afterRes.ok) throw new Error(afterData.error || "Could not verify sanitized file");
 
         setQueue((prev) =>
           prev.map((item) => {
@@ -267,11 +226,9 @@ export default function HomePage() {
             return {
               ...item,
               isProcessing: false,
-              beforeReport: data.beforeReport || item.beforeReport,
-              afterReport: data.afterReport,
-              processedBlob: outBlob,
+              afterReport: afterData.report,
               processedUrl: outUrl,
-              processedFilename: data.filename,
+              processedFilename: outputFilename,
               error: null,
             };
           })
@@ -294,12 +251,12 @@ export default function HomePage() {
 
   const handleProcessActive = () => {
     if (!activeAsset) return;
-    void processSingleAsset(activeAsset, options);
+    void processSingleAsset(activeAsset);
   };
 
   const handleProcessAll = async () => {
     for (const item of queue) {
-      await processSingleAsset(item, options);
+      await processSingleAsset(item);
     }
   };
 
@@ -311,39 +268,6 @@ export default function HomePage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const handleDownloadBatchZip = async () => {
-    const completed = queue.filter(
-      (q) => q.processedBlob && q.processedFilename
-    );
-    if (completed.length === 0) return;
-
-    const zip = new JSZip();
-    const usedNames = new Set<string>();
-
-    for (const item of completed) {
-      let name = item.processedFilename!;
-      if (usedNames.has(name)) {
-        const dot = name.lastIndexOf(".");
-        name =
-          dot > 0
-            ? `${name.slice(0, dot)}_${usedNames.size}${name.slice(dot)}`
-            : `${name}_${usedNames.size}`;
-      }
-      usedNames.add(name);
-      zip.file(name, item.processedBlob!);
-    }
-
-    const zipBlob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `DCIM_Camera_Batch_${completed.length}_Files.zip`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
   };
 
   const handleRemoveAsset = (id: string) => {
@@ -371,15 +295,6 @@ export default function HomePage() {
     setGlobalError(null);
   };
 
-  // Telemetry readout for Viewfinder HUD
-  const selectedProfile = getCameraProfile(options.profileId);
-  const selectedLens = getLensForProfile(selectedProfile, options.lensId);
-  const hudFocal = options.focalLengthMm ?? selectedLens.defaultFocalMm;
-  const hudEquiv = compute35mmEquivalent(hudFocal, selectedProfile);
-  const hudAperture = options.fNumber ?? selectedLens.defaultFNumber;
-  const hudShutter = options.shutterSpeed || "1/250";
-  const hudIso = options.iso ?? selectedProfile.baseIso;
-
   const processedCount = queue.filter((q) => Boolean(q.processedUrl)).length;
   const unprocessedCount = queue.length - processedCount;
   const anyProcessing = queue.some((q) => q.isProcessing);
@@ -405,12 +320,11 @@ export default function HomePage() {
                   EXIF<span className="text-amber-400">{"//"}</span>FORGE
                 </span>
                 <span className="hidden sm:inline-block rounded border border-[#262c3a] bg-[#14171f] px-2 py-0.5 font-mono text-[10px] text-[#9aa3b5]">
-                  OPTICAL TELEMETRY BENCH
+                  UNIVERSAL FILE SANITIZER
                 </span>
               </div>
               <p className="text-[11px] text-[#7c8599]">
-                Strip C2PA, JUMBF, XMP &amp; diffusion signatures · Inject
-                authentic camera EXIF
+                Stream and inspect any file · no application size cap
               </p>
             </div>
           </div>
@@ -458,7 +372,7 @@ export default function HomePage() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/*,video/mp4,video/quicktime,.jpg,.jpeg,.png,.webp,.avif,.mp4,.mov"
+          accept={FILE_INPUT_ACCEPT}
           className="hidden"
           onChange={(e) => {
             if (e.target.files?.length) {
@@ -511,18 +425,18 @@ export default function HomePage() {
                 </div>
 
                 <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#f3f5f9]">
-                  Drop AI Images or Videos for Deep Sanitization
+                  Drop Any File for Provenance Scanning
                 </h1>
                 <p className="mx-auto mt-2.5 max-w-xl text-sm text-[#9aa3b5]">
-                  Decodes images down to raw uncompressed RGB pixels to destroy
-                  C2PA manifests, ComfyUI node graphs, Stable Diffusion prompts
-                  &amp; XMP tags—then injects hardware-accurate camera EXIF.
+                  Add photos, audio, documents, video, archives, or arbitrary
+                  binary files. Uploads are scanned and streamed through a
+                  size-preserving provenance-marker cleanup pass.
                 </p>
 
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                   <span className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 font-display text-xs font-semibold text-[#0a0b0e] shadow-md">
                     <Upload className="h-4 w-4" />
-                    Select Photos or Videos
+                    Select Files
                   </span>
                   <button
                     type="button"
@@ -541,20 +455,20 @@ export default function HomePage() {
                 <div className="mt-10 pt-6 border-t border-[#1e2330] grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
                   {[
                     {
-                      title: "C2PA & JUMBF",
-                      desc: "OpenAI DALL·E, GPT-4o, Sora, Firefly & SynthID",
+                      title: "C2PA / JUMBF markers",
+                      desc: "Recognized manifest UUID and textual signatures",
                     },
                     {
-                      title: "Diffusion Chunks",
-                      desc: "ComfyUI workflows, A1111, Forge & Flux tEXt/zTXt",
+                      title: "AI workflow strings",
+                      desc: "ComfyUI node graphs and diffusion-generator fingerprints",
                     },
                     {
-                      title: "XMP & IPTC",
-                      desc: "Purges trainedAlgorithmicMedia & CreatorTool URIs",
+                      title: "IPTC / XMP attribution",
+                      desc: "Algorithmic media and explicit AI disclosure strings",
                     },
                     {
-                      title: "35+ Optical Tags",
-                      desc: "APEX shutter/aperture, LensSpec, RTC sub-sec & GPS",
+                      title: "Cross-media support",
+                      desc: "Photos, audio, documents, video, archives and binary files",
                     },
                   ].map((item) => (
                     <div
@@ -587,16 +501,6 @@ export default function HomePage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {processedCount > 1 && (
-                        <button
-                          type="button"
-                          onClick={handleDownloadBatchZip}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-1 text-xs font-medium text-emerald-200 hover:bg-emerald-500/30 transition-colors cursor-pointer"
-                        >
-                          <Archive className="h-3.5 w-3.5" />
-                          Download ZIP ({processedCount})
-                        </button>
-                      )}
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
@@ -644,8 +548,12 @@ export default function HomePage() {
                                 alt={item.file.name}
                                 className="h-full w-full object-cover"
                               />
-                            ) : (
+                            ) : item.mediaType === "video" ? (
                               <FileVideo className="h-5 w-5 text-amber-400" />
+                            ) : item.mediaType === "audio" ? (
+                              <FileVideo className="h-5 w-5 text-sky-400" />
+                            ) : (
+                              <Archive className="h-5 w-5 text-zinc-400" />
                             )}
                           </div>
                           <div className="min-w-0 flex-1">
@@ -661,7 +569,7 @@ export default function HomePage() {
                               ) : item.afterReport ? (
                                 <span className="text-emerald-400 flex items-center gap-1">
                                   <CheckCircle2 className="h-3 w-3" />
-                                  Camera Verified
+                                  Sanitized
                                 </span>
                               ) : aiDetected ? (
                                 <span className="text-red-400 flex items-center gap-1">
@@ -716,8 +624,10 @@ export default function HomePage() {
                       <div className="flex items-center gap-2 min-w-0">
                         {activeAsset.mediaType === "image" ? (
                           <FileImage className="h-4 w-4 text-amber-400 shrink-0" />
-                        ) : (
+                        ) : activeAsset.mediaType === "video" ? (
                           <FileVideo className="h-4 w-4 text-amber-400 shrink-0" />
+                        ) : (
+                          <Archive className="h-4 w-4 text-sky-400 shrink-0" />
                         )}
                         <span className="font-mono text-xs font-medium text-[#f3f5f9] truncate">
                           {showingProcessed && activeAsset.processedFilename
@@ -727,7 +637,7 @@ export default function HomePage() {
                         {activeAsset.afterReport ? (
                           <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
                             <ShieldCheck className="h-3 w-3" />
-                            CLEANED &amp; TAGGED
+                            STREAM-SANITIZED
                           </span>
                         ) : (
                           activeAsset.beforeReport?.authenticityStatus ===
@@ -764,7 +674,7 @@ export default function HomePage() {
                                   : "text-[#8e97aa]"
                               }`}
                             >
-                              Camera Output
+                              Sanitized
                             </button>
                           </div>
                         )}
@@ -797,24 +707,26 @@ export default function HomePage() {
                           alt={activeAsset.file.name}
                           className="max-h-[420px] w-auto rounded object-contain shadow-2xl"
                         />
+                      ) : activeAsset.mediaType === "video" && stageMediaUrl ? (
+                        <video key={stageMediaUrl} src={stageMediaUrl} controls muted className="max-h-[420px] w-auto rounded object-contain shadow-2xl" />
+                      ) : activeAsset.mediaType === "audio" && stageMediaUrl ? (
+                        <audio key={stageMediaUrl} src={stageMediaUrl} controls className="w-full max-w-xl" />
                       ) : stageMediaUrl ? (
-                        <video
-                          key={stageMediaUrl}
-                          src={stageMediaUrl}
-                          controls
-                          muted
-                          className="max-h-[420px] w-auto rounded object-contain shadow-2xl"
-                        />
+                        <div className="text-center font-mono text-sm text-[#9aa3b5]">
+                          <Archive className="mx-auto mb-3 h-10 w-10 text-amber-400" />
+                          <p>{activeAsset.beforeReport?.containerFormat || "FILE"} · {formatBytes(activeAsset.file.size)}</p>
+                          <p className="mt-1 text-xs">Arbitrary file preserved; provenance metadata is sanitized in-place.</p>
+                        </div>
                       ) : null}
 
                       {activeAsset.isProcessing && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#08090c]/80 backdrop-blur-xs">
                           <Loader2 className="h-9 w-9 animate-spin text-amber-400 mb-3" />
                           <p className="font-display text-sm font-semibold text-[#f3f5f9]">
-                            Re-encoding Raw Pixels &amp; Embedding Camera IFDs…
+                            Streaming file and removing recognized provenance markers…
                           </p>
                           <p className="mt-1 font-mono text-xs text-amber-300/80">
-                            {selectedProfile.make} · {selectedProfile.model}
+                            Format-preserving · no size cap
                           </p>
                         </div>
                       )}
@@ -824,21 +736,9 @@ export default function HomePage() {
                     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#1d222d] bg-[#0e1016] px-4 py-2.5 font-mono text-xs">
                       <div className="flex flex-wrap items-center gap-3 text-amber-300">
                         <span className="font-semibold text-[#f3f5f9]">
-                          {showingProcessed && activeAsset.afterReport?.exifSummary.model
-                            ? `${activeAsset.afterReport.exifSummary.make} ${activeAsset.afterReport.exifSummary.model}`
-                            : `${selectedProfile.make} · ${selectedProfile.shortName}`}
+                          {activeAsset.afterReport?.containerFormat || activeAsset.beforeReport?.containerFormat || "File"} · {activeAsset.mediaType}
                         </span>
-                        {activeAsset.mediaType === "image" && (
-                          <>
-                            <span className="text-[#3a4254]">|</span>
-                            <span>{hudShutter}s</span>
-                            <span>f/{hudAperture}</span>
-                            <span>ISO {hudIso}</span>
-                            <span>
-                              {hudFocal}mm ({hudEquiv}mm)
-                            </span>
-                          </>
-                        )}
+                        {activeAsset.afterReport && <span className="text-emerald-300">Sanitized output</span>}
                       </div>
 
                       <div className="flex items-center gap-2 text-[11px] text-[#7c8599]">
@@ -878,17 +778,20 @@ export default function HomePage() {
 
           {/* RIGHT CONTROL BAY: CAMERA & SANITIZATION TELEMETRY DECK */}
           <aside className="lg:col-span-5 xl:col-span-4 lg:sticky lg:top-20">
-            <CameraControlDeck
-              options={options}
-              onChange={setOptions}
-              onProcessActive={handleProcessActive}
-              onProcessAll={handleProcessAll}
-              isProcessing={anyProcessing}
-              hasActiveFile={Boolean(activeAsset)}
-              activeMediaType={activeAsset?.mediaType ?? null}
-              queueCount={queue.length}
-              unprocessedCount={unprocessedCount}
-            />
+            <div className="rounded-xl border border-[#232834] bg-[#111318] p-5">
+                <div className="mb-3 flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                  <h2 className="font-display text-sm font-semibold text-[#f3f5f9]">Universal file sanitizer</h2>
+                </div>
+                <p className="mb-4 text-xs leading-relaxed text-[#9aa3b5]">
+                  Any file format and size is accepted. The byte-preserving streaming pass removes recognized provenance markers without decoding or re-encoding your file.
+                </p>
+                <button type="button" onClick={handleProcessActive} disabled={!activeAsset || anyProcessing} className="w-full rounded-lg bg-emerald-500 px-4 py-3 font-display text-sm font-bold text-[#07110c] hover:bg-emerald-400 disabled:opacity-50">
+                  Sanitize selected file
+                </button>
+                {queue.length > 1 && <button type="button" onClick={handleProcessAll} disabled={anyProcessing} className="mt-2 w-full rounded-lg border border-[#343c4e] px-4 py-2 text-xs font-semibold text-[#d0d7e6] hover:border-emerald-500/50 disabled:opacity-50">Sanitize all {queue.length} files</button>}
+                <p className="mt-3 text-[10px] text-[#727b8d]">Streaming request/response · no application byte-size cap</p>
+            </div>
           </aside>
         </div>
       </main>

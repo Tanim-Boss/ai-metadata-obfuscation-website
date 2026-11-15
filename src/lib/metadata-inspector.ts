@@ -2,6 +2,7 @@ import crypto from "crypto";
 import zlib from "zlib";
 import sharp from "sharp";
 import exifr from "exifr";
+import type { FileKind } from "@/lib/file-formats";
 
 export type ChunkCategory =
   | "ai-provenance"
@@ -69,7 +70,7 @@ export interface ExifSummary {
 
 export interface ForensicReport {
   filename: string;
-  mediaType: "image" | "video";
+  mediaType: FileKind;
   containerFormat: string;
   byteSize: number;
   sha256: string;
