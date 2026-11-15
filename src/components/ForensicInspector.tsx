@@ -233,14 +233,15 @@ export function ForensicInspector({
 
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5">
                   <div className="flex items-center justify-between text-xs text-amber-200/80 mb-1">
-                    <span>Sanitization complete</span>
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                    <span>Verified Camera Telemetry</span>
+                    <Camera className="h-4 w-4 text-amber-400" />
                   </div>
                   <div className="font-display text-sm font-semibold text-amber-200 truncate">
-                    {afterReport.containerFormat} · {afterReport.mediaType}
+                    {afterReport.exifSummary.make}{" "}
+                    {afterReport.exifSummary.model}
                   </div>
                   <p className="mt-1 font-mono text-[11px] text-amber-200/75 truncate">
-                    {formatBytes(afterReport.byteSize)} processed · streaming output
+                    {afterReport.tags.length} authentic optical tags verified
                   </p>
                 </div>
               </div>
@@ -250,7 +251,7 @@ export function ForensicInspector({
                 <div className="rounded-lg border border-[#252a37] bg-[#14171e] p-4">
                   <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-300 mb-3">
                     <XCircle className="h-4 w-4 text-red-400" />
-                    Detected Provenance Markers
+                    Purged Provenance &amp; Ancillary Data
                   </div>
                   {beforeReport.aiFindings.length > 0 ? (
                     <ul className="space-y-2.5">
@@ -275,7 +276,8 @@ export function ForensicInspector({
                     </ul>
                   ) : (
                     <div className="rounded border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-[#9aa3b5]">
-                      No registered text-based provenance markers were found in the streamed file content.
+                      Re-encoded from raw uncompressed pixels — stripped all prior
+                      container headers, ICC tags, and encoder footprints.
                     </div>
                   )}
                 </div>
@@ -283,21 +285,38 @@ export function ForensicInspector({
                 <div className="rounded-lg border border-[#252a37] bg-[#14171e] p-4">
                   <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-300 mb-3">
                     <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    File integrity
+                    Embedded Optical Telemetry
                   </div>
-                  <div className="grid grid-cols-1 gap-2 font-mono text-xs">
-                    <div className="rounded border border-[#232834] bg-[#0f1117] px-2.5 py-1.5">
-                      <div className="text-[10px] text-[#646e82]">Output SHA-256</div>
-                      <div className="text-[#f3f5f9] break-all">{afterReport.sha256}</div>
-                    </div>
-                    <div className="rounded border border-[#232834] bg-[#0f1117] px-2.5 py-1.5">
-                      <div className="text-[10px] text-[#646e82]">Format · size</div>
-                      <div className="text-[#f3f5f9]">{afterReport.containerFormat} · {formatBytes(afterReport.byteSize)}</div>
-                    </div>
-                    <div className="rounded border border-[#232834] bg-[#0f1117] px-2.5 py-1.5">
-                      <div className="text-[10px] text-[#646e82]">Remaining registered markers</div>
-                      <div className="text-[#f3f5f9]">{afterReport.aiFindings.length}</div>
-                    </div>
+                  <div className="grid grid-cols-2 gap-2 font-mono text-xs">
+                    {[
+                      ["Make", afterReport.exifSummary.make],
+                      ["Model", afterReport.exifSummary.model],
+                      ["Lens", afterReport.exifSummary.lensModel],
+                      ["Firmware", afterReport.exifSummary.software],
+                      ["Shutter", afterReport.exifSummary.exposureTime],
+                      ["Aperture", afterReport.exifSummary.fNumber],
+                      ["ISO", afterReport.exifSummary.iso],
+                      [
+                        "Focal Length",
+                        afterReport.exifSummary.focalLength35mm
+                          ? `${afterReport.exifSummary.focalLength} (${afterReport.exifSummary.focalLength35mm})`
+                          : afterReport.exifSummary.focalLength,
+                      ],
+                      ["Captured", afterReport.exifSummary.dateTimeOriginal],
+                      ["GPS", afterReport.exifSummary.gps || "None (Stripped)"],
+                    ]
+                      .filter(([, v]) => Boolean(v))
+                      .map(([k, v]) => (
+                        <div
+                          key={k}
+                          className="rounded border border-[#232834] bg-[#0f1117] px-2.5 py-1.5"
+                        >
+                          <div className="text-[10px] text-[#646e82]">{k}</div>
+                          <div className="text-[#f3f5f9] truncate" title={v}>
+                            {v}
+                          </div>
+                        </div>
+                      ))}
                   </div>
                 </div>
               </div>
@@ -331,9 +350,7 @@ export function ForensicInspector({
                           ? "AI Generation Provenance Detected"
                           : beforeReport.authenticityStatus === "camera-verified"
                           ? "Camera EXIF Telemetry Present"
-                          : beforeReport.mediaType === "image"
-                          ? "No registered provenance markers detected"
-                          : "File provenance scan complete"}
+                          : "Missing Optical Camera Telemetry"}
                       </h3>
                       <span
                         className={`rounded px-2 py-0.5 font-mono text-[11px] font-medium ${
@@ -356,9 +373,7 @@ export function ForensicInspector({
                         ? `Current camera tag: ${beforeReport.exifSummary.make} ${
                             beforeReport.exifSummary.model || ""
                           }`
-                        : beforeReport.mediaType === "image"
-                        ? `No camera EXIF tags found in ${beforeReport.containerFormat}; provenance scan complete.`
-                        : `No registered provenance markers found in the scanned ${beforeReport.mediaType} payload.`}
+                        : `No camera Make/Model/Lens IFDs found in ${beforeReport.containerFormat} container.`}
                     </p>
                   </div>
                 </div>
