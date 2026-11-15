@@ -18,6 +18,7 @@ import {
   Plus,
   Lock,
   Eye,
+  FileSearch,
 } from "lucide-react";
 import {
   CAMERA_PROFILES,
@@ -29,6 +30,7 @@ import {
 import type { ForensicReport } from "@/lib/metadata-inspector";
 import { classifyFileType } from "@/lib/media-classify";
 import { ForensicInspector } from "@/components/ForensicInspector";
+import { MetadataInspectorModal } from "@/components/MetadataInspectorModal";
 import { CameraControlDeck } from "@/components/CameraControlDeck";
 
 interface QueuedAsset {
@@ -92,6 +94,7 @@ export default function HomePage() {
 
   const [queue, setQueue] = useState<QueuedAsset[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [inspectModalOpen, setInspectModalOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [loadingSample, setLoadingSample] = useState<"comfyui" | "c2pa" | null>(
     null
@@ -136,6 +139,20 @@ export default function HomePage() {
       );
     }
   }, []);
+
+  const openInspector = useCallback(
+    (asset?: QueuedAsset) => {
+      if (asset) {
+        setActiveId(asset.id);
+        // Kick off a scan if this file has no report yet and isn't scanning.
+        if (!asset.beforeReport && !asset.afterReport && !asset.isInspecting) {
+          void inspectQueuedFile(asset.id, asset.file);
+        }
+      }
+      setInspectModalOpen(true);
+    },
+    [inspectQueuedFile]
+  );
 
   const addFilesToQueue = useCallback(
     (fileList: FileList | File[]) => {
@@ -688,6 +705,18 @@ export default function HomePage() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              openInspector(item);
+                            }}
+                            className="opacity-60 hover:opacity-100 text-[#7c8599] hover:text-amber-300 p-1"
+                            title="Inspect all metadata"
+                            aria-label={`Inspect metadata of ${item.file.name}`}
+                          >
+                            <FileSearch className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
                               handleRemoveAsset(item.id);
                             }}
                             className="opacity-60 hover:opacity-100 text-[#7c8599] hover:text-red-400 p-1"
@@ -754,6 +783,20 @@ export default function HomePage() {
                       </div>
 
                       <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openInspector(activeAsset)}
+                          title="Inspect all embedded metadata — EXIF, XMP, C2PA, chunks &amp; tag dump"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/45 bg-amber-500/10 px-3 py-1.5 font-display text-xs font-semibold text-amber-200 hover:bg-amber-500/20 hover:text-amber-100 transition-colors cursor-pointer"
+                        >
+                          {activeAsset.isInspecting ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <FileSearch className="h-3.5 w-3.5" />
+                          )}
+                          Inspect Metadata
+                        </button>
+
                         {activeAsset.processedUrl && (
                           <div className="inline-flex rounded-lg border border-[#262c3a] bg-[#0b0d12] p-0.5 text-[11px]">
                             <button
@@ -960,6 +1003,20 @@ export default function HomePage() {
           </aside>
         </div>
       </main>
+
+      {/* FULL METADATA INSPECTOR MODAL */}
+      {activeAsset && (
+        <MetadataInspectorModal
+          open={inspectModalOpen}
+          onClose={() => setInspectModalOpen(false)}
+          filename={activeAsset.file.name}
+          mediaType={activeAsset.mediaType}
+          beforeReport={activeAsset.beforeReport}
+          afterReport={activeAsset.afterReport}
+          isInspecting={activeAsset.isInspecting}
+          onRescan={() => inspectQueuedFile(activeAsset.id, activeAsset.file)}
+        />
+      )}
     </div>
   );
 }
