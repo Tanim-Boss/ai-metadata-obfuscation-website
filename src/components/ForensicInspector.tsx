@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Layers,
   FileSearch,
+  FileText,
   Search,
   ArrowRight,
   CheckCircle2,
@@ -62,6 +63,9 @@ export function ForensicInspector({
 
   const displayedReport =
     afterReport && viewTarget === "after" ? afterReport : beforeReport;
+
+  const isDoc =
+    (afterReport ?? beforeReport)?.mediaType === "document";
 
   const filteredTags = useMemo(() => {
     if (!displayedReport) return [];
@@ -231,19 +235,38 @@ export function ForensicInspector({
                   </p>
                 </div>
 
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5">
-                  <div className="flex items-center justify-between text-xs text-amber-200/80 mb-1">
-                    <span>Verified Camera Telemetry</span>
-                    <Camera className="h-4 w-4 text-amber-400" />
+                {isDoc ? (
+                  <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3.5">
+                    <div className="flex items-center justify-between text-xs text-sky-200/80 mb-1">
+                      <span>Scrubbed Document Metadata</span>
+                      <FileText className="h-4 w-4 text-sky-400" />
+                    </div>
+                    <div className="font-display text-sm font-semibold text-sky-200 truncate">
+                      {afterReport.tags.length} properties remaining
+                    </div>
+                    <p className="mt-1 font-mono text-[11px] text-sky-200/75 truncate">
+                      {Math.max(
+                        0,
+                        beforeReport.tags.length - afterReport.tags.length
+                      )}{" "}
+                      properties removed
+                    </p>
                   </div>
-                  <div className="font-display text-sm font-semibold text-amber-200 truncate">
-                    {afterReport.exifSummary.make}{" "}
-                    {afterReport.exifSummary.model}
+                ) : (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5">
+                    <div className="flex items-center justify-between text-xs text-amber-200/80 mb-1">
+                      <span>Verified Camera Telemetry</span>
+                      <Camera className="h-4 w-4 text-amber-400" />
+                    </div>
+                    <div className="font-display text-sm font-semibold text-amber-200 truncate">
+                      {afterReport.exifSummary.make}{" "}
+                      {afterReport.exifSummary.model}
+                    </div>
+                    <p className="mt-1 font-mono text-[11px] text-amber-200/75 truncate">
+                      {afterReport.tags.length} authentic optical tags verified
+                    </p>
                   </div>
-                  <p className="mt-1 font-mono text-[11px] text-amber-200/75 truncate">
-                    {afterReport.tags.length} authentic optical tags verified
-                  </p>
-                </div>
+                )}
               </div>
 
               {/* Side-by-side Purged vs Injected */}
@@ -282,43 +305,79 @@ export function ForensicInspector({
                   )}
                 </div>
 
-                <div className="rounded-lg border border-[#252a37] bg-[#14171e] p-4">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-300 mb-3">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    Embedded Optical Telemetry
+                {isDoc ? (
+                  <div className="rounded-lg border border-[#252a37] bg-[#14171e] p-4">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-sky-300 mb-3">
+                      <CheckCircle2 className="h-4 w-4 text-sky-400" />
+                      Removed Document Properties
+                    </div>
+                    {beforeReport.tags.filter(
+                      (bt) => !afterReport.tags.some((at) => at.tag === bt.tag)
+                    ).length > 0 ? (
+                      <ul className="space-y-1.5 font-mono text-[11px]">
+                        {beforeReport.tags
+                          .filter(
+                            (bt) =>
+                              !afterReport.tags.some((at) => at.tag === bt.tag)
+                          )
+                          .slice(0, 12)
+                          .map((bt) => (
+                            <li
+                              key={bt.tag}
+                              className="flex items-start justify-between gap-2 rounded border border-sky-500/20 bg-sky-500/5 px-2.5 py-1.5"
+                            >
+                              <span className="text-[#9aa3b5]">{bt.tag}</span>
+                              <span className="truncate text-sky-200/80">
+                                {bt.value}
+                              </span>
+                            </li>
+                          ))}
+                      </ul>
+                    ) : (
+                      <div className="rounded border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-[#9aa3b5]">
+                        No removable document properties were detected.
+                      </div>
+                    )}
                   </div>
-                  <div className="grid grid-cols-2 gap-2 font-mono text-xs">
-                    {[
-                      ["Make", afterReport.exifSummary.make],
-                      ["Model", afterReport.exifSummary.model],
-                      ["Lens", afterReport.exifSummary.lensModel],
-                      ["Firmware", afterReport.exifSummary.software],
-                      ["Shutter", afterReport.exifSummary.exposureTime],
-                      ["Aperture", afterReport.exifSummary.fNumber],
-                      ["ISO", afterReport.exifSummary.iso],
-                      [
-                        "Focal Length",
-                        afterReport.exifSummary.focalLength35mm
-                          ? `${afterReport.exifSummary.focalLength} (${afterReport.exifSummary.focalLength35mm})`
-                          : afterReport.exifSummary.focalLength,
-                      ],
-                      ["Captured", afterReport.exifSummary.dateTimeOriginal],
-                      ["GPS", afterReport.exifSummary.gps || "None (Stripped)"],
-                    ]
-                      .filter(([, v]) => Boolean(v))
-                      .map(([k, v]) => (
-                        <div
-                          key={k}
-                          className="rounded border border-[#232834] bg-[#0f1117] px-2.5 py-1.5"
-                        >
-                          <div className="text-[10px] text-[#646e82]">{k}</div>
-                          <div className="text-[#f3f5f9] truncate" title={v}>
-                            {v}
+                ) : (
+                  <div className="rounded-lg border border-[#252a37] bg-[#14171e] p-4">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-300 mb-3">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      Embedded Optical Telemetry
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 font-mono text-xs">
+                      {[
+                        ["Make", afterReport.exifSummary.make],
+                        ["Model", afterReport.exifSummary.model],
+                        ["Lens", afterReport.exifSummary.lensModel],
+                        ["Firmware", afterReport.exifSummary.software],
+                        ["Shutter", afterReport.exifSummary.exposureTime],
+                        ["Aperture", afterReport.exifSummary.fNumber],
+                        ["ISO", afterReport.exifSummary.iso],
+                        [
+                          "Focal Length",
+                          afterReport.exifSummary.focalLength35mm
+                            ? `${afterReport.exifSummary.focalLength} (${afterReport.exifSummary.focalLength35mm})`
+                            : afterReport.exifSummary.focalLength,
+                        ],
+                        ["Captured", afterReport.exifSummary.dateTimeOriginal],
+                        ["GPS", afterReport.exifSummary.gps || "None (Stripped)"],
+                      ]
+                        .filter(([, v]) => Boolean(v))
+                        .map(([k, v]) => (
+                          <div
+                            key={k}
+                            className="rounded border border-[#232834] bg-[#0f1117] px-2.5 py-1.5"
+                          >
+                            <div className="text-[10px] text-[#646e82]">{k}</div>
+                            <div className="text-[#f3f5f9] truncate" title={v}>
+                              {v}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </>
           ) : (
@@ -346,7 +405,13 @@ export function ForensicInspector({
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-display text-base font-semibold text-[#f3f5f9]">
-                        {beforeReport.authenticityStatus === "ai-detected"
+                        {isDoc
+                          ? beforeReport.authenticityStatus === "ai-detected"
+                            ? "AI Generation Provenance Detected"
+                            : beforeReport.authenticityStatus === "suspicious"
+                            ? "Identity-Leaking Document Metadata"
+                            : "No Risky Document Metadata"
+                          : beforeReport.authenticityStatus === "ai-detected"
                           ? "AI Generation Provenance Detected"
                           : beforeReport.authenticityStatus === "camera-verified"
                           ? "Camera EXIF Telemetry Present"
@@ -365,7 +430,15 @@ export function ForensicInspector({
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-[#9aa3b5]">
-                      {beforeReport.detectedGenerators.length > 0
+                      {isDoc
+                        ? beforeReport.detectedGenerators.length > 0
+                          ? `Identified signatures: ${beforeReport.detectedGenerators.join(
+                              " · "
+                            )}`
+                          : beforeReport.tags.length > 0
+                          ? `${beforeReport.tags.length} embedded document properties found (author, creator, dates…)`
+                          : `No extractable document metadata found in ${beforeReport.containerFormat}.`
+                        : beforeReport.detectedGenerators.length > 0
                         ? `Identified signatures: ${beforeReport.detectedGenerators.join(
                             " · "
                           )}`

@@ -12,6 +12,7 @@ import {
   Sparkles,
   FileImage,
   FileVideo,
+  FileText,
   CheckCircle2,
   Loader2,
   Plus,
@@ -26,13 +27,14 @@ import {
   type TelemetryOptions,
 } from "@/lib/camera-profiles";
 import type { ForensicReport } from "@/lib/metadata-inspector";
+import { classifyFileType } from "@/lib/media-classify";
 import { ForensicInspector } from "@/components/ForensicInspector";
 import { CameraControlDeck } from "@/components/CameraControlDeck";
 
 interface QueuedAsset {
   id: string;
   file: File;
-  mediaType: "image" | "video";
+  mediaType: "image" | "video" | "document";
   previewUrl: string;
   isInspecting: boolean;
   isProcessing: boolean;
@@ -44,13 +46,8 @@ interface QueuedAsset {
   error: string | null;
 }
 
-function detectMediaType(file: File): "image" | "video" | null {
-  if (file.type.startsWith("image/")) return "image";
-  if (file.type.startsWith("video/")) return "video";
-  const lower = file.name.toLowerCase();
-  if (/\.(jpg|jpeg|png|webp|avif|tiff|tif)$/i.test(lower)) return "image";
-  if (/\.(mp4|mov|m4v)$/i.test(lower)) return "video";
-  return null;
+function detectMediaType(file: File): "image" | "video" | "document" | null {
+  return classifyFileType(file);
 }
 
 function base64ToBlob(base64: string, mimeType: string): Blob {
@@ -150,7 +147,7 @@ export default function HomePage() {
         const mediaType = detectMediaType(f);
         if (!mediaType) {
           setGlobalError(
-            `Skipped "${f.name}" — supported formats: JPG, PNG, WebP, AVIF, MP4, MOV.`
+            `Skipped "${f.name}" — supported formats: JPG, PNG, WebP, AVIF, MP4, MOV, PDF, DOCX, EPUB, TXT & more.`
           );
           continue;
         }
@@ -240,6 +237,8 @@ export default function HomePage() {
         const endpoint =
           asset.mediaType === "video"
             ? "/api/process/video"
+            : asset.mediaType === "document"
+            ? "/api/process/document"
             : "/api/process/image";
 
         const formData = new FormData();
@@ -458,7 +457,7 @@ export default function HomePage() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/*,video/mp4,video/quicktime,.jpg,.jpeg,.png,.webp,.avif,.mp4,.mov"
+          accept="image/*,video/*,.pdf,.doc,.docx,.txt,.rtf,.epub,.odt,.ods,.odp,.ppt,.pptx,.xls,.xlsx,.csv,.md,.html,.xml,.json"
           className="hidden"
           onChange={(e) => {
             if (e.target.files?.length) {
@@ -511,18 +510,20 @@ export default function HomePage() {
                 </div>
 
                 <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#f3f5f9]">
-                  Drop AI Images or Videos for Deep Sanitization
+                  Drop AI Images, Videos or Documents for Deep Sanitization
                 </h1>
                 <p className="mx-auto mt-2.5 max-w-xl text-sm text-[#9aa3b5]">
                   Decodes images down to raw uncompressed RGB pixels to destroy
                   C2PA manifests, ComfyUI node graphs, Stable Diffusion prompts
                   &amp; XMP tags—then injects hardware-accurate camera EXIF.
+                  Documents (PDF, DOCX, EPUB, TXT…) are scrubbed of author,
+                  creator, producer &amp; provenance metadata too.
                 </p>
 
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                   <span className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 font-display text-xs font-semibold text-[#0a0b0e] shadow-md">
                     <Upload className="h-4 w-4" />
-                    Select Photos or Videos
+                    Select Photos, Videos or Documents
                   </span>
                   <button
                     type="button"
@@ -555,6 +556,10 @@ export default function HomePage() {
                     {
                       title: "35+ Optical Tags",
                       desc: "APEX shutter/aperture, LensSpec, RTC sub-sec & GPS",
+                    },
+                    {
+                      title: "Document Provenance",
+                      desc: "Strips PDF/XMP, Office docProps & EPUB author/creator metadata",
                     },
                   ].map((item) => (
                     <div
@@ -644,8 +649,10 @@ export default function HomePage() {
                                 alt={item.file.name}
                                 className="h-full w-full object-cover"
                               />
-                            ) : (
+                            ) : item.mediaType === "video" ? (
                               <FileVideo className="h-5 w-5 text-amber-400" />
+                            ) : (
+                              <FileText className="h-5 w-5 text-amber-400" />
                             )}
                           </div>
                           <div className="min-w-0 flex-1">
@@ -661,7 +668,9 @@ export default function HomePage() {
                               ) : item.afterReport ? (
                                 <span className="text-emerald-400 flex items-center gap-1">
                                   <CheckCircle2 className="h-3 w-3" />
-                                  Camera Verified
+                                  {item.mediaType === "document"
+                                    ? "Metadata Scrubbed"
+                                    : "Camera Verified"}
                                 </span>
                               ) : aiDetected ? (
                                 <span className="text-red-400 flex items-center gap-1">
@@ -716,8 +725,10 @@ export default function HomePage() {
                       <div className="flex items-center gap-2 min-w-0">
                         {activeAsset.mediaType === "image" ? (
                           <FileImage className="h-4 w-4 text-amber-400 shrink-0" />
-                        ) : (
+                        ) : activeAsset.mediaType === "video" ? (
                           <FileVideo className="h-4 w-4 text-amber-400 shrink-0" />
+                        ) : (
+                          <FileText className="h-4 w-4 text-amber-400 shrink-0" />
                         )}
                         <span className="font-mono text-xs font-medium text-[#f3f5f9] truncate">
                           {showingProcessed && activeAsset.processedFilename
@@ -727,7 +738,9 @@ export default function HomePage() {
                         {activeAsset.afterReport ? (
                           <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
                             <ShieldCheck className="h-3 w-3" />
-                            CLEANED &amp; TAGGED
+                            {activeAsset.mediaType === "document"
+                              ? "METADATA SCRUBBED"
+                              : "CLEANED & TAGGED"}
                           </span>
                         ) : (
                           activeAsset.beforeReport?.authenticityStatus ===
@@ -797,7 +810,7 @@ export default function HomePage() {
                           alt={activeAsset.file.name}
                           className="max-h-[420px] w-auto rounded object-contain shadow-2xl"
                         />
-                      ) : stageMediaUrl ? (
+                      ) : activeAsset.mediaType === "video" && stageMediaUrl ? (
                         <video
                           key={stageMediaUrl}
                           src={stageMediaUrl}
@@ -805,17 +818,67 @@ export default function HomePage() {
                           muted
                           className="max-h-[420px] w-auto rounded object-contain shadow-2xl"
                         />
+                      ) : activeAsset.mediaType === "document" ? (
+                        <div className="flex max-h-[420px] w-full max-w-md flex-col items-center gap-4 rounded-xl border border-[#232834] bg-[#0f1117] p-8 text-center shadow-2xl">
+                          <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-[#2c3344] bg-[#171b24] text-amber-400">
+                            <FileText className="h-9 w-9" />
+                          </div>
+                          <div>
+                            <div className="truncate font-mono text-sm font-medium text-[#f3f5f9]">
+                              {showingProcessed && activeAsset.processedFilename
+                                ? activeAsset.processedFilename
+                                : activeAsset.file.name}
+                            </div>
+                            <div className="mt-1 font-mono text-[11px] text-[#7c8599]">
+                              {activeAsset.beforeReport?.containerFormat ||
+                                activeAsset.afterReport?.containerFormat ||
+                                "Document"}{" "}
+                              · {formatBytes(activeAsset.file.size)}
+                            </div>
+                          </div>
+                          <div className="w-full rounded-lg border border-[#232834] bg-[#0a0b0e] px-3 py-2 text-left font-mono text-[11px] text-[#9aa3b5]">
+                            {activeAsset.afterReport ? (
+                              <span className="text-emerald-300">
+                                ✓ Metadata scrubbed —{" "}
+                                {activeAsset.afterReport.tags.length} properties
+                                remaining
+                              </span>
+                            ) : activeAsset.beforeReport &&
+                              activeAsset.beforeReport.tags.length > 0 ? (
+                              <span className="text-amber-300">
+                                {activeAsset.beforeReport.tags.length} embedded
+                                metadata properties detected
+                              </span>
+                            ) : (
+                              <span>No extractable metadata detected</span>
+                            )}
+                          </div>
+                        </div>
                       ) : null}
 
                       {activeAsset.isProcessing && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#08090c]/80 backdrop-blur-xs">
                           <Loader2 className="h-9 w-9 animate-spin text-amber-400 mb-3" />
-                          <p className="font-display text-sm font-semibold text-[#f3f5f9]">
-                            Re-encoding Raw Pixels &amp; Embedding Camera IFDs…
-                          </p>
-                          <p className="mt-1 font-mono text-xs text-amber-300/80">
-                            {selectedProfile.make} · {selectedProfile.model}
-                          </p>
+                          {activeAsset.mediaType === "document" ? (
+                            <>
+                              <p className="font-display text-sm font-semibold text-[#f3f5f9]">
+                                Scrubbing Document Metadata…
+                              </p>
+                              <p className="mt-1 font-mono text-xs text-amber-300/80">
+                                Stripping author, creator &amp; provenance tags
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="font-display text-sm font-semibold text-[#f3f5f9]">
+                                Re-encoding Raw Pixels &amp; Embedding Camera
+                                IFDs…
+                              </p>
+                              <p className="mt-1 font-mono text-xs text-amber-300/80">
+                                {selectedProfile.make} · {selectedProfile.model}
+                              </p>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
@@ -824,9 +887,14 @@ export default function HomePage() {
                     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#1d222d] bg-[#0e1016] px-4 py-2.5 font-mono text-xs">
                       <div className="flex flex-wrap items-center gap-3 text-amber-300">
                         <span className="font-semibold text-[#f3f5f9]">
-                          {showingProcessed && activeAsset.afterReport?.exifSummary.model
-                            ? `${activeAsset.afterReport.exifSummary.make} ${activeAsset.afterReport.exifSummary.model}`
-                            : `${selectedProfile.make} · ${selectedProfile.shortName}`}
+                          {activeAsset.mediaType === "document" ? (
+                            "Document Sanitization"
+                          ) : showingProcessed &&
+                            activeAsset.afterReport?.exifSummary.model ? (
+                            `${activeAsset.afterReport.exifSummary.make} ${activeAsset.afterReport.exifSummary.model}`
+                          ) : (
+                            `${selectedProfile.make} · ${selectedProfile.shortName}`
+                          )}
                         </span>
                         {activeAsset.mediaType === "image" && (
                           <>
