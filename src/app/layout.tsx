@@ -15,16 +15,30 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="dark">
-      <head>
+    // suppressHydrationWarning: browser extensions (and password managers)
+    // routinely rewrite attributes on <html>/<body> before React hydrates.
+    // That is the one mismatch React cannot and should not patch, so we opt
+    // these two elements out of attribute comparison. The suppression is only
+    // one level deep and does not hide mismatches in the tree below.
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <body
+        className="min-h-screen bg-[#0a0b0e] text-[#f3f5f9] antialiased selection:bg-amber-500/30 selection:text-amber-200"
+        suppressHydrationWarning
+      >
         {/*
-          Runs before any chunk request so a tab that outlived a dev-server
-          restart (or a fresh deployment) recovers from a stale ChunkLoadError
-          instead of dying on the framework error overlay.
+          Runs inline during the initial HTML parse, before any Next.js chunk
+          is requested, so a tab that outlived a dev-server restart (or a fresh
+          deployment) recovers from a stale ChunkLoadError instead of dying on
+          the framework error overlay.
+
+          Kept as a plain inline <script> (rather than a manually written
+          <head> element) because the App Router owns <head>; rendering our own
+          produces a server/client tree mismatch during hydration.
         */}
-        <script dangerouslySetInnerHTML={{ __html: CHUNK_RECOVERY_SCRIPT }} />
-      </head>
-      <body className="min-h-screen bg-[#0a0b0e] text-[#f3f5f9] antialiased selection:bg-amber-500/30 selection:text-amber-200">
+        <script
+          id="chunk-recovery"
+          dangerouslySetInnerHTML={{ __html: CHUNK_RECOVERY_SCRIPT }}
+        />
         <ChunkGuard />
         {children}
       </body>
