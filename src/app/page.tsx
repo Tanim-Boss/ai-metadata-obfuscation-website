@@ -578,6 +578,10 @@ export default function HomePage() {
                       title: "Document Provenance",
                       desc: "Strips PDF/XMP, Office docProps & EPUB author/creator metadata",
                     },
+                    {
+                      title: "Byte-Level Inspector",
+                      desc: "Reads real EXIF IFDs, XMP, IPTC, ICC & JUMBF — before and after",
+                    },
                   ].map((item) => (
                     <div
                       key={item.title}
@@ -981,6 +985,8 @@ export default function HomePage() {
                     beforeReport={activeAsset.beforeReport}
                     afterReport={activeAsset.afterReport}
                     isInspecting={activeAsset.isInspecting}
+                    error={activeAsset.error}
+                    onOpenInspector={() => openInspector(activeAsset)}
                   />
                 )}
               </>
@@ -1014,6 +1020,7 @@ export default function HomePage() {
           beforeReport={activeAsset.beforeReport}
           afterReport={activeAsset.afterReport}
           isInspecting={activeAsset.isInspecting}
+          error={activeAsset.error}
           onRescan={() => inspectQueuedFile(activeAsset.id, activeAsset.file)}
         />
       )}
