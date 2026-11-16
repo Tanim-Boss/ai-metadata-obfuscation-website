@@ -442,6 +442,7 @@ export async function inspectDocumentBuffer(
   buf: Buffer,
   filename = "document"
 ): Promise<ForensicReport> {
+  const startedAt = Date.now();
   const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
   const { format, kind } = await detectDocumentFormat(buf, filename);
 
@@ -617,5 +618,26 @@ export async function inspectDocumentBuffer(
     chunks,
     exifSummary: {},
     tags,
+    xmp: (() => {
+      const xmpTags = tags.filter((t) => t.group.includes("XMP"));
+      return {
+        present: xmpTags.length > 0,
+        packetBytes: 0,
+        properties: xmpTags.map((t) => ({ key: t.tag, value: t.value })),
+      };
+    })(),
+    iptc: tags
+      .filter((t) => t.group.includes("IPTC"))
+      .map((t) => ({ key: t.tag, value: t.value })),
+    notes: [
+      `Document container detected as ${format} (${kind}).`,
+      tags.length > 0
+        ? `${tags.length} authoring metadata propert${tags.length === 1 ? "y" : "ies"} extracted.`
+        : "No authoring metadata properties were found in this document.",
+    ],
+    parsedWith: ["document-container", kind],
+    hasC2paManifest: false,
+    inspectedAt: new Date().toISOString(),
+    scanMs: Date.now() - startedAt,
   };
 }

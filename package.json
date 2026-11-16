@@ -2,11 +2,12 @@
   "name": "nextjs-postgresql-template",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev:turbo": "next dev --turbo"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
