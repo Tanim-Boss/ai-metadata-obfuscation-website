@@ -8,7 +8,7 @@
  *   Runtime ChunkLoadError
  *   Failed to load chunk /_next/static/chunks/... from module ...
  *
- * The script below is injected into <head> so it runs before any chunk is
+ * The script below is inlined as the first child of <body> so it runs before any chunk is
  * requested. It detects chunk-load failures (script/link load errors, unhandled
  * rejection of a dynamic import, or the visible dev-overlay text) and reloads
  * the document once, re-fetching the HTML so the correct chunk names are used.

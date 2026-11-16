@@ -2,7 +2,7 @@
  * Client-side recovery for stale JavaScript chunks.
  *
  * `chunk-recovery-script.ts` handles failures that happen before hydration (it
- * is inlined in <head>). This module installs the same guard after hydration so
+ * is inlined at the top of <body>). This module installs the same guard after hydration so
  * client-side navigations that request a chunk from an older build also recover
  * instead of leaving the user staring at an error overlay.
  */
