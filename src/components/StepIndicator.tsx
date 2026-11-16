@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, FileUp, FileSearch, SlidersHorizontal } from "lucide-react";
+import { Check, ChevronRight } from "lucide-react";
 import type { StudioStep, UploadMode } from "./studio-types";
 
 interface StepIndicatorProps {
@@ -11,6 +11,14 @@ interface StepIndicatorProps {
   onSelectStep: (step: StudioStep) => void;
 }
 
+/**
+ * Compact single-rail stepper.
+ *
+ * Previous version rendered three tall cards with icon blocks, a "STEP 0X"
+ * eyebrow, a title and a subtitle — roughly 130px of vertical space before any
+ * work could start. This version keeps the same information in one ~44px row
+ * so more of the viewport goes to the actual file workflow.
+ */
 export function StepIndicator({
   currentStep,
   hasFiles,
@@ -22,37 +30,33 @@ export function StepIndicator({
     step: StudioStep;
     code: string;
     title: string;
-    subtitle: string;
-    icon: typeof FileUp;
+    hint: string;
     unlocked: boolean;
   }> = [
     {
       step: 1,
       code: "01",
       title: "Choose File",
-      subtitle:
+      hint:
         fileCount > 0
-          ? `${fileCount} ${uploadMode === "single" ? "file selected" : "files queued"}`
+          ? `${fileCount} ${uploadMode === "single" ? "selected" : "queued"}`
           : uploadMode === "single"
-          ? "Single file mode"
-          : "Multiple files mode",
-      icon: FileUp,
+          ? "Single"
+          : "Batch",
       unlocked: true,
     },
     {
       step: 2,
       code: "02",
-      title: "Inspect Metadata",
-      subtitle: "Clean download or inject",
-      icon: FileSearch,
+      title: "Inspect",
+      hint: hasFiles ? "Clean or inject" : "Locked",
       unlocked: hasFiles,
     },
     {
       step: 3,
       code: "03",
-      title: "Inject & Download",
-      subtitle: "Telemetry profile & export",
-      icon: SlidersHorizontal,
+      title: "Inject & Export",
+      hint: hasFiles ? "Telemetry" : "Locked",
       unlocked: hasFiles,
     },
   ];
@@ -60,69 +64,81 @@ export function StepIndicator({
   return (
     <nav
       aria-label="Workflow steps"
-      className="rounded-2xl border border-[#232834] bg-[#111318] p-2 sm:p-2.5"
+      className="flex items-center overflow-hidden rounded-xl border border-[#232834] bg-[#111318]"
     >
-      <ol className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        {steps.map((item) => {
+      <ol className="flex min-w-0 flex-1 items-stretch">
+        {steps.map((item, index) => {
           const isActive = currentStep === item.step;
           const isDone = currentStep > item.step && item.unlocked;
-          const Icon = item.icon;
 
           return (
-            <li key={item.step}>
+            <li key={item.step} className="flex min-w-0 flex-1 items-stretch">
+              {index > 0 && (
+                <span
+                  aria-hidden
+                  className="flex shrink-0 items-center text-[#394153]"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              )}
+
               <button
                 type="button"
                 disabled={!item.unlocked}
+                aria-current={isActive ? "step" : undefined}
                 onClick={() => item.unlocked && onSelectStep(item.step)}
-                className={`group flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-all ${
+                className={`group flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left transition-colors sm:gap-2.5 sm:px-3.5 ${
                   isActive
-                    ? "border-amber-500/60 bg-amber-500/10 shadow-[0_0_0_1px_rgba(245,158,11,0.2)] cursor-default"
+                    ? "bg-amber-500/[0.09] cursor-default"
                     : isDone
-                    ? "border-emerald-500/35 bg-emerald-500/[0.06] hover:border-emerald-500/60 hover:bg-emerald-500/10 cursor-pointer"
+                    ? "hover:bg-emerald-500/[0.07] cursor-pointer"
                     : item.unlocked
-                    ? "border-[#232834] bg-[#151821] hover:border-[#343c4e] cursor-pointer"
-                    : "border-[#1b1f29] bg-[#0d0f14] opacity-45 cursor-not-allowed"
+                    ? "hover:bg-[#171a22] cursor-pointer"
+                    : "opacity-45 cursor-not-allowed"
                 }`}
               >
-                <div
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono text-xs font-bold transition-colors ${
+                <span
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border font-mono text-[10px] font-bold transition-colors ${
                     isActive
-                      ? "border-amber-500/60 bg-amber-500 text-[#0a0b0e]"
+                      ? "border-amber-400/60 bg-amber-500 text-[#0a0b0e]"
                       : isDone
-                      ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-300"
+                      ? "border-emerald-500/45 bg-emerald-500/15 text-emerald-300"
                       : item.unlocked
                       ? "border-[#2c3344] bg-[#171b24] text-[#9aa3b5] group-hover:text-[#f3f5f9]"
                       : "border-[#202430] bg-[#111318] text-[#4b5568]"
                   }`}
                 >
                   {isDone ? (
-                    <Check className="h-4 w-4" />
+                    <Check className="h-3 w-3" />
                   ) : (
-                    <Icon className="h-4 w-4" />
+                    item.code
                   )}
-                </div>
+                </span>
 
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
                     <span
-                      className={`font-mono text-[10px] font-semibold tracking-wider ${
+                      className={`truncate font-display text-xs font-semibold ${
                         isActive
-                          ? "text-amber-400"
-                          : isDone
-                          ? "text-emerald-400"
-                          : "text-[#646e82]"
+                          ? "text-amber-100"
+                          : item.unlocked
+                          ? "text-[#e6ebf4]"
+                          : "text-[#8891a4]"
                       }`}
                     >
-                      STEP {item.code}
+                      {item.title}
                     </span>
-                  </div>
-                  <div className="truncate font-display text-xs sm:text-sm font-semibold text-[#f3f5f9]">
-                    {item.title}
-                  </div>
-                  <div className="truncate text-[11px] text-[#7c8599]">
-                    {item.subtitle}
-                  </div>
-                </div>
+                    {isActive && (
+                      <span
+                        aria-hidden
+                        className="h-1 w-1 shrink-0 rounded-full bg-amber-400"
+                      />
+                    )}
+                  </span>
+                  <span className="block truncate font-mono text-[9px] uppercase tracking-wider text-[#6f7889]">
+                    {isDone ? "Done" : item.hint}
+                  </span>
+                </span>
               </button>
             </li>
           );
