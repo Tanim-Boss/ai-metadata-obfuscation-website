@@ -22,7 +22,6 @@ import {
   type TelemetryOptions,
 } from "@/lib/camera-profiles";
 import { CameraControlDeck } from "./CameraControlDeck";
-import { AssetThumb } from "./studio-ui";
 import { formatBytesShort, type QueuedAsset } from "./studio-types";
 
 interface StepThreeInjectProps {
@@ -86,25 +85,25 @@ export function StepThreeInject({
   };
 
   return (
-    <div className="space-y-3">
-      {/* TOP BAR + QUEUE STRIP — one dense rail */}
-      <div className="overflow-hidden rounded-xl border border-[#232834] bg-[#111318]">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3.5 py-2 sm:px-4">
-          <div className="flex min-w-0 items-center gap-2.5">
+    <div className="space-y-5">
+      {/* TOP BAR + QUEUE STRIP */}
+      <div className="rounded-2xl border border-[#232834] bg-[#111318] p-3.5 sm:p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={onBackToInspect}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#2b3242] bg-[#171a22] px-2 py-1 font-mono text-[10px] font-medium text-[#d5dce9] hover:border-amber-500/50 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#2b3242] bg-[#171a22] px-3 py-1.5 text-xs font-medium text-[#d5dce9] hover:border-amber-500/50 transition-colors cursor-pointer"
             >
-              <ArrowLeft className="h-3 w-3" />
-              Inspect
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back to Inspect
             </button>
-            <div className="min-w-0">
-              <span className="block font-mono text-[9px] uppercase tracking-[0.16em] text-amber-400">
-                Step 03 · Telemetry &amp; export
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-amber-400">
+                Step 03 · Inject Metadata &amp; Download
               </span>
-              <h2 className="truncate font-display text-xs font-bold text-[#f3f5f9] sm:text-sm">
-                Configure camera profile, then inject &amp; download
+              <h2 className="font-display text-sm sm:text-base font-bold text-[#f3f5f9]">
+                Configure target telemetry, sanitize AI signatures, and export
               </h2>
             </div>
           </div>
@@ -113,17 +112,17 @@ export function StepThreeInject({
             <button
               type="button"
               onClick={onDownloadAllInjectedZip}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/20 px-2.5 py-1 font-mono text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/30 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/30 transition-colors cursor-pointer"
             >
-              <Archive className="h-3 w-3" />
-              Batch ZIP ({injectedCount})
+              <Archive className="h-3.5 w-3.5" />
+              Download Batch ZIP ({injectedCount})
             </button>
           )}
         </div>
 
         {/* Multi-file switcher */}
         {queue.length > 1 && (
-          <div className="queue-rail flex gap-1.5 overflow-x-auto border-t border-[#1d222d] px-3.5 py-2 sm:px-4">
+          <div className="flex gap-2 overflow-x-auto pt-2 border-t border-[#1e2330] pb-1">
             {queue.map((item) => {
               const selected = item.id === activeAsset.id;
               return (
@@ -131,17 +130,26 @@ export function StepThreeInject({
                   key={item.id}
                   type="button"
                   onClick={() => onSelectAsset(item.id)}
-                  className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 min-w-[176px] max-w-[220px] text-left shrink-0 transition-colors cursor-pointer ${
+                  className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 min-w-[205px] max-w-[245px] text-left shrink-0 transition-all cursor-pointer ${
                     selected
-                      ? "border-amber-500/70 bg-amber-500/10"
+                      ? "border-amber-500/75 bg-amber-500/10"
                       : "border-[#232834] bg-[#151821] hover:border-[#343c4e]"
                   }`}
                 >
-                  <AssetThumb
-                    asset={item}
-                    size="sm"
-                    src={item.injectedUrl || item.previewUrl}
-                  />
+                  <div className="h-9 w-9 rounded-lg overflow-hidden bg-[#0b0d12] border border-[#252a37] flex items-center justify-center shrink-0">
+                    {item.mediaType === "image" ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={item.injectedUrl || item.previewUrl}
+                        alt={item.file.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : item.mediaType === "video" ? (
+                      <FileVideo className="h-4 w-4 text-amber-400" />
+                    ) : (
+                      <FileText className="h-4 w-4 text-amber-400" />
+                    )}
+                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-mono text-xs font-medium text-[#f3f5f9]">
                       {item.injectedFilename || item.file.name}

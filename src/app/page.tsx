@@ -496,47 +496,51 @@ export default function HomePage() {
     : null;
 
   return (
-    <div className="canvas-glow flex min-h-screen flex-col bg-[#0a0b0e] text-[#f3f5f9]">
-      {/* TOP INSTRUMENT BAR — single compact row, sticky */}
+    <div className="min-h-screen flex flex-col bg-[#0a0b0e] text-[#f3f5f9]">
+      {/* TOP INSTRUMENT BAR */}
       <header className="sticky top-0 z-30 border-b border-[#1f2430] bg-[#0a0b0e]/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-2 sm:px-5">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-amber-500/40 bg-amber-500/10 font-mono text-[11px] font-bold text-amber-400">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/10 font-mono text-xs font-bold text-amber-400">
               f/
             </div>
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="font-display text-sm font-bold tracking-tight text-[#f3f5f9]">
-                EXIF<span className="text-amber-400">{"//"}</span>FORGE
-              </span>
-              <span className="hidden h-3 w-px bg-[#2b3242] sm:block" />
-              <p className="hidden truncate text-[11px] text-[#7c8599] md:block">
-                Strip AI provenance · inject authentic camera telemetry
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-display text-base font-bold tracking-tight text-[#f3f5f9]">
+                  EXIF<span className="text-amber-400">{"//"}</span>FORGE
+                </span>
+                <span className="hidden sm:inline-block rounded border border-[#262c3a] bg-[#14171f] px-2 py-0.5 font-mono text-[10px] text-[#9aa3b5]">
+                  3-STEP METADATA STUDIO
+                </span>
+              </div>
+              <p className="text-[11px] text-[#7c8599]">
+                Choose files · Inspect &amp; Clean Download · Inject camera
+                telemetry
               </p>
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex items-center gap-2">
             {queue.length > 0 && (
               <button
                 type="button"
                 onClick={handleClearAll}
-                className="inline-flex items-center gap-1 rounded-md border border-[#282e3d] bg-[#14171f] px-2 py-1 font-mono text-[10px] font-medium text-[#d0d7e6] transition-colors hover:border-red-500/45 hover:text-red-200 cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#282e3d] bg-[#14171f] px-3 py-1.5 text-xs font-medium text-[#d0d7e6] hover:border-red-500/45 hover:text-red-200 transition-colors cursor-pointer"
               >
-                <RotateCcw className="h-3 w-3" />
-                New session
+                <RotateCcw className="h-3.5 w-3.5" />
+                New Session
               </button>
             )}
-            <div className="inline-flex items-center gap-1 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 font-mono text-[10px] text-emerald-300">
+            <div className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1.5 font-mono text-[11px] text-emerald-300">
               <Lock className="h-3 w-3" />
-              <span className="hidden sm:inline">Zero-retention RAM</span>
-              <span className="sm:hidden">RAM only</span>
+              Zero-Retention RAM
             </div>
           </div>
         </div>
       </header>
 
       {/* MAIN 3-STEP WORKSPACE */}
-      <main className="mx-auto w-full max-w-7xl flex-1 space-y-3 px-3 py-3 sm:px-5 sm:py-4">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 space-y-6">
         <StepIndicator
           currentStep={currentStep}
           hasFiles={queue.length > 0}
@@ -550,12 +554,12 @@ export default function HomePage() {
         />
 
         {globalError && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <div className="flex items-center justify-between rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-xs text-red-200">
             <span>{globalError}</span>
             <button
               type="button"
               onClick={() => setGlobalError(null)}
-              className="shrink-0 font-mono text-[10px] text-red-300 hover:text-white cursor-pointer"
+              className="font-mono text-red-300 hover:text-white ml-4 cursor-pointer"
             >
               DISMISS
             </button>
