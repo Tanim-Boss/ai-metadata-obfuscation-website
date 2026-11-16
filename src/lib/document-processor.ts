@@ -1,6 +1,7 @@
 import { PDFDocument, PDFName } from "pdf-lib";
 import JSZip from "jszip";
 import type { ForensicReport } from "./metadata-inspector";
+import type { DocumentMetadataOptions, TelemetryOptions } from "./camera-profiles";
 import { inspectDocumentBuffer } from "./document-inspector";
 import { getExtension } from "./media-classify";
 
@@ -48,17 +49,26 @@ function baseName(filename: string): string {
 
 /* ----------------------------- PDF ------------------------------- */
 
-async function stripPdf(buf: Buffer): Promise<Buffer> {
+async function stripPdf(
+  buf: Buffer,
+  docMeta?: DocumentMetadataOptions
+): Promise<Buffer> {
   try {
     const pdf = await PDFDocument.load(buf, {
       ignoreEncryption: true,
       updateMetadata: false,
     });
-    pdf.setTitle("");
-    pdf.setAuthor("");
-    pdf.setSubject("");
-    pdf.setKeywords([]);
-    pdf.setCreator("");
+    pdf.setTitle(docMeta?.title?.trim() || "");
+    pdf.setAuthor(docMeta?.author?.trim() || "");
+    pdf.setSubject(docMeta?.subject?.trim() || "");
+    const kw = docMeta?.keywords
+      ? docMeta.keywords
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    pdf.setKeywords(kw);
+    pdf.setCreator(docMeta?.creator?.trim() || "");
     pdf.setProducer("");
     // Neutralize timestamps so the real authoring date is not leaked.
     const neutralDate = new Date(Date.UTC(2000, 0, 1, 0, 0, 0));
@@ -184,9 +194,12 @@ async function stripZip(buf: Buffer): Promise<Buffer> {
 
 export async function processDocumentBuffer(
   inputBuffer: Buffer,
-  originalFilename: string
+  originalFilename: string,
+  options?: Partial<TelemetryOptions>
 ): Promise<ProcessedDocumentResult> {
   const beforeReport = await inspectDocumentBuffer(inputBuffer, originalFilename);
+  const isCleanOnly = options?.mode === "clean";
+  const docMeta = isCleanOnly ? undefined : options?.documentMetadata;
 
   const ext = getExtension(originalFilename) || "bin";
   const mimeType = mimeFromExt(ext);
@@ -195,7 +208,7 @@ export async function processDocumentBuffer(
   let outputBuffer: Buffer;
 
   if (head.startsWith("%PDF-")) {
-    outputBuffer = await stripPdf(inputBuffer);
+    outputBuffer = await stripPdf(inputBuffer, docMeta);
   } else if (inputBuffer.subarray(0, 4).toString("latin1") === "PK\u0003\u0004") {
     outputBuffer = await stripZip(inputBuffer);
   } else {
@@ -204,7 +217,8 @@ export async function processDocumentBuffer(
     outputBuffer = inputBuffer;
   }
 
-  const outputFilename = `sanitized_${baseName(originalFilename)}.${ext}`;
+  const prefix = isCleanOnly ? "clean" : "sanitized";
+  const outputFilename = `${prefix}_${baseName(originalFilename)}.${ext}`;
   const afterReport = await inspectDocumentBuffer(outputBuffer, outputFilename);
 
   return {

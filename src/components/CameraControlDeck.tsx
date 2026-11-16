@@ -26,13 +26,14 @@ import {
 interface CameraControlDeckProps {
   options: TelemetryOptions;
   onChange: (next: TelemetryOptions) => void;
-  onProcessActive: () => void;
+  onProcessActive?: () => void;
   onProcessAll?: () => void;
   isProcessing: boolean;
   hasActiveFile: boolean;
   activeMediaType: "image" | "video" | "document" | null;
   queueCount: number;
   unprocessedCount: number;
+  hideActions?: boolean;
 }
 
 const CATEGORY_FILTERS: Array<{ id: "all" | CameraCategory; label: string }> = [
@@ -53,6 +54,7 @@ export function CameraControlDeck({
   activeMediaType,
   queueCount,
   unprocessedCount,
+  hideActions = false,
 }: CameraControlDeckProps) {
   const [categoryFilter, setCategoryFilter] = useState<"all" | CameraCategory>(
     "all"
@@ -770,38 +772,40 @@ export function CameraControlDeck({
       </div>
 
       {/* 6. PRIMARY EXECUTION BUTTONS */}
-      <div className="space-y-2">
-        <button
-          type="button"
-          disabled={!hasActiveFile || isProcessing}
-          onClick={onProcessActive}
-          className={`w-full rounded-xl py-3.5 px-4 font-display text-sm font-semibold transition-all ${
-            !hasActiveFile || isProcessing
-              ? "bg-[#1c202b] text-[#5c6579] cursor-not-allowed border border-[#252a38]"
-              : "bg-amber-500 text-[#0a0b0e] hover:bg-amber-400 shadow-[0_8px_24px_-6px_rgba(245,158,11,0.45)] cursor-pointer"
-          }`}
-        >
-          {isProcessing
-            ? activeMediaType === "document"
-              ? "Scrubbing Document Metadata…"
-              : "Sanitizing Bitstream & Injecting Camera IFDs…"
-            : activeMediaType === "document"
-            ? "Purge Document Metadata"
-            : "Purge AI Metadata & Inject Camera Telemetry"}
-        </button>
-
-        {queueCount > 1 && onProcessAll && (
+      {!hideActions && (
+        <div className="space-y-2">
           <button
             type="button"
-            disabled={isProcessing}
-            onClick={onProcessAll}
-            className="w-full rounded-xl border border-amber-500/40 bg-amber-500/10 py-2.5 px-4 font-display text-xs font-semibold text-amber-200 hover:bg-amber-500/20 transition-colors cursor-pointer"
+            disabled={!hasActiveFile || isProcessing}
+            onClick={onProcessActive}
+            className={`w-full rounded-xl py-3.5 px-4 font-display text-sm font-semibold transition-all ${
+              !hasActiveFile || isProcessing
+                ? "bg-[#1c202b] text-[#5c6579] cursor-not-allowed border border-[#252a38]"
+                : "bg-amber-500 text-[#0a0b0e] hover:bg-amber-400 shadow-[0_8px_24px_-6px_rgba(245,158,11,0.45)] cursor-pointer"
+            }`}
           >
-            Batch Process All {queueCount} Files
-            {unprocessedCount > 0 ? ` (${unprocessedCount} pending)` : ""}
+            {isProcessing
+              ? activeMediaType === "document"
+                ? "Scrubbing Document Metadata…"
+                : "Sanitizing Bitstream & Injecting Camera IFDs…"
+              : activeMediaType === "document"
+              ? "Purge Document Metadata"
+              : "Purge AI Metadata & Inject Camera Telemetry"}
           </button>
-        )}
-      </div>
+
+          {queueCount > 1 && onProcessAll && (
+            <button
+              type="button"
+              disabled={isProcessing}
+              onClick={onProcessAll}
+              className="w-full rounded-xl border border-amber-500/40 bg-amber-500/10 py-2.5 px-4 font-display text-xs font-semibold text-amber-200 hover:bg-amber-500/20 transition-colors cursor-pointer"
+            >
+              Batch Process All {queueCount} Files
+              {unprocessedCount > 0 ? ` (${unprocessedCount} pending)` : ""}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

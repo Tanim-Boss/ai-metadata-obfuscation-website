@@ -1,56 +1,23 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import JSZip from "jszip";
-import {
-  Upload,
-  Download,
-  Archive,
-  Trash2,
-  ShieldCheck,
-  ShieldAlert,
-  Sparkles,
-  FileImage,
-  FileVideo,
-  FileText,
-  CheckCircle2,
-  Loader2,
-  Plus,
-  Lock,
-  Eye,
-  FileSearch,
-} from "lucide-react";
+import { Lock, RotateCcw } from "lucide-react";
 import {
   CAMERA_PROFILES,
-  compute35mmEquivalent,
-  getCameraProfile,
-  getLensForProfile,
   type TelemetryOptions,
 } from "@/lib/camera-profiles";
-import type { ForensicReport } from "@/lib/metadata-inspector";
 import { classifyFileType } from "@/lib/media-classify";
-import { ForensicInspector } from "@/components/ForensicInspector";
 import { MetadataInspectorModal } from "@/components/MetadataInspectorModal";
-import { CameraControlDeck } from "@/components/CameraControlDeck";
-
-interface QueuedAsset {
-  id: string;
-  file: File;
-  mediaType: "image" | "video" | "document";
-  previewUrl: string;
-  isInspecting: boolean;
-  isProcessing: boolean;
-  beforeReport: ForensicReport | null;
-  afterReport: ForensicReport | null;
-  processedBlob: Blob | null;
-  processedUrl: string | null;
-  processedFilename: string | null;
-  error: string | null;
-}
-
-function detectMediaType(file: File): "image" | "video" | "document" | null {
-  return classifyFileType(file);
-}
+import { StepIndicator } from "@/components/StepIndicator";
+import { StepOneUpload } from "@/components/StepOneUpload";
+import { StepTwoInspect } from "@/components/StepTwoInspect";
+import { StepThreeInject } from "@/components/StepThreeInject";
+import type {
+  QueuedAsset,
+  StudioStep,
+  UploadMode,
+} from "@/components/studio-types";
 
 function base64ToBlob(base64: string, mimeType: string): Blob {
   const binStr = atob(base64);
@@ -61,17 +28,30 @@ function base64ToBlob(base64: string, mimeType: string): Blob {
   return new Blob([bytes], { type: mimeType });
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+function triggerDownload(url: string, filename: string) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function revokeAssetUrls(asset: QueuedAsset) {
+  URL.revokeObjectURL(asset.previewUrl);
+  if (asset.cleanUrl) URL.revokeObjectURL(asset.cleanUrl);
+  if (asset.injectedUrl) URL.revokeObjectURL(asset.injectedUrl);
 }
 
 export default function HomePage() {
   const defaultProfile = CAMERA_PROFILES[0];
   const defaultLens = defaultProfile.lenses[0];
 
+  const [currentStep, setCurrentStep] = useState<StudioStep>(1);
+  const [uploadMode, setUploadMode] = useState<UploadMode>("single");
+
   const [options, setOptions] = useState<TelemetryOptions>({
+    mode: "inject",
     profileId: defaultProfile.id,
     lensId: defaultLens.id,
     focalLengthMm: defaultLens.defaultFocalMm,
@@ -90,25 +70,31 @@ export default function HomePage() {
     jpegQuality: 96,
     renameToCameraConvention: true,
     addSensorGrain: false,
+    documentMetadata: {},
   });
 
   const [queue, setQueue] = useState<QueuedAsset[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [inspectModalOpen, setInspectModalOpen] = useState(false);
-  const [isDragOver, setIsDragOver] = useState(false);
+  const [inspectModalAssetId, setInspectModalAssetId] = useState<string | null>(
+    null
+  );
   const [loadingSample, setLoadingSample] = useState<"comfyui" | "c2pa" | null>(
     null
   );
-  const [previewStageMode, setPreviewStageMode] = useState<"after" | "before">(
-    "after"
-  );
   const [globalError, setGlobalError] = useState<string | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   const activeAsset = queue.find((item) => item.id === activeId) ?? queue[0] ?? null;
+  const modalAsset =
+    queue.find((item) => item.id === inspectModalAssetId) ?? activeAsset;
 
   const inspectQueuedFile = useCallback(async (assetId: string, file: File) => {
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.id === assetId
+          ? { ...item, isInspecting: true, error: null }
+          : item
+      )
+    );
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -140,18 +126,19 @@ export default function HomePage() {
     }
   }, []);
 
-  const openInspector = useCallback(
-    (asset?: QueuedAsset) => {
-      if (asset) {
-        setActiveId(asset.id);
-        // Kick off a scan if this file has no report yet and isn't scanning.
-        if (!asset.beforeReport && !asset.afterReport && !asset.isInspecting) {
-          void inspectQueuedFile(asset.id, asset.file);
+  const handleChangeMode = useCallback(
+    (nextMode: UploadMode) => {
+      setUploadMode(nextMode);
+      if (nextMode === "single" && queue.length > 1) {
+        const keep = activeAsset ?? queue[0];
+        for (const item of queue) {
+          if (item.id !== keep.id) revokeAssetUrls(item);
         }
+        setQueue([keep]);
+        setActiveId(keep.id);
       }
-      setInspectModalOpen(true);
     },
-    [inspectQueuedFile]
+    [queue, activeAsset]
   );
 
   const addFilesToQueue = useCallback(
@@ -161,7 +148,7 @@ export default function HomePage() {
       const validAssets: QueuedAsset[] = [];
 
       for (const f of incoming) {
-        const mediaType = detectMediaType(f);
+        const mediaType = classifyFileType(f);
         if (!mediaType) {
           setGlobalError(
             `Skipped "${f.name}" — supported formats: JPG, PNG, WebP, AVIF, MP4, MOV, PDF, DOCX, EPUB, TXT & more.`
@@ -175,27 +162,51 @@ export default function HomePage() {
           mediaType,
           previewUrl: URL.createObjectURL(f),
           isInspecting: true,
-          isProcessing: false,
+          isCleaning: false,
+          isInjecting: false,
           beforeReport: null,
-          afterReport: null,
-          processedBlob: null,
-          processedUrl: null,
-          processedFilename: null,
+          cleanReport: null,
+          cleanBlob: null,
+          cleanUrl: null,
+          cleanFilename: null,
+          injectedReport: null,
+          injectedBlob: null,
+          injectedUrl: null,
+          injectedFilename: null,
           error: null,
         });
       }
 
       if (validAssets.length === 0) return;
 
-      setQueue((prev) => [...prev, ...validAssets]);
-      setActiveId((prev) => prev ?? validAssets[0].id);
-      setPreviewStageMode("after");
+      // If multiple files were dropped while in Single File mode, automatically promote to Multiple Files mode
+      const effectiveMode: UploadMode =
+        validAssets.length > 1 && uploadMode === "single"
+          ? "multiple"
+          : uploadMode;
 
-      for (const asset of validAssets) {
-        void inspectQueuedFile(asset.id, asset.file);
+      if (effectiveMode !== uploadMode) {
+        setUploadMode(effectiveMode);
+      }
+
+      if (effectiveMode === "single") {
+        const single = validAssets[0];
+        setQueue((prev) => {
+          for (const old of prev) revokeAssetUrls(old);
+          return [single];
+        });
+        setActiveId(single.id);
+        setCurrentStep(2);
+        void inspectQueuedFile(single.id, single.file);
+      } else {
+        setQueue((prev) => [...prev, ...validAssets]);
+        setActiveId((prev) => prev ?? validAssets[0].id);
+        for (const asset of validAssets) {
+          void inspectQueuedFile(asset.id, asset.file);
+        }
       }
     },
-    [inspectQueuedFile]
+    [uploadMode, inspectQueuedFile]
   );
 
   const handleLoadSample = async (variant: "comfyui" | "c2pa") => {
@@ -219,18 +230,31 @@ export default function HomePage() {
         mediaType: "image",
         previewUrl: URL.createObjectURL(blob),
         isInspecting: false,
-        isProcessing: false,
+        isCleaning: false,
+        isInjecting: false,
         beforeReport: data.report,
-        afterReport: null,
-        processedBlob: null,
-        processedUrl: null,
-        processedFilename: null,
+        cleanReport: null,
+        cleanBlob: null,
+        cleanUrl: null,
+        cleanFilename: null,
+        injectedReport: null,
+        injectedBlob: null,
+        injectedUrl: null,
+        injectedFilename: null,
         error: null,
       };
 
-      setQueue((prev) => [newAsset, ...prev]);
-      setActiveId(id);
-      setPreviewStageMode("after");
+      if (uploadMode === "single") {
+        setQueue((prev) => {
+          for (const old of prev) revokeAssetUrls(old);
+          return [newAsset];
+        });
+        setActiveId(id);
+        setCurrentStep(2);
+      } else {
+        setQueue((prev) => [...prev, newAsset]);
+        setActiveId(id);
+      }
     } catch (err) {
       setGlobalError(
         err instanceof Error ? err.message : "Failed to load sample AI file."
@@ -240,12 +264,21 @@ export default function HomePage() {
     }
   };
 
-  const processSingleAsset = useCallback(
-    async (asset: QueuedAsset, currentOptions: TelemetryOptions) => {
+  const processAsset = useCallback(
+    async (
+      asset: QueuedAsset,
+      mode: "clean" | "inject",
+      currentOptions: TelemetryOptions
+    ): Promise<{ blob: Blob; filename: string } | null> => {
       setQueue((prev) =>
         prev.map((item) =>
           item.id === asset.id
-            ? { ...item, isProcessing: true, error: null }
+            ? {
+                ...item,
+                isCleaning: mode === "clean" ? true : item.isCleaning,
+                isInjecting: mode === "inject" ? true : item.isInjecting,
+                error: null,
+              }
             : item
         )
       );
@@ -258,10 +291,15 @@ export default function HomePage() {
             ? "/api/process/document"
             : "/api/process/image";
 
+        const payloadOptions: TelemetryOptions =
+          mode === "clean"
+            ? { ...currentOptions, mode: "clean", outputFormat: "keep" }
+            : { ...currentOptions, mode: "inject" };
+
         const formData = new FormData();
         formData.append("file", asset.file);
-        formData.append("profile", currentOptions.profileId);
-        formData.append("options", JSON.stringify(currentOptions));
+        formData.append("profile", payloadOptions.profileId);
+        formData.append("options", JSON.stringify(payloadOptions));
         formData.append("responseMode", "json");
 
         const res = await fetch(endpoint, {
@@ -279,132 +317,183 @@ export default function HomePage() {
         setQueue((prev) =>
           prev.map((item) => {
             if (item.id !== asset.id) return item;
-            if (item.processedUrl) URL.revokeObjectURL(item.processedUrl);
-            return {
-              ...item,
-              isProcessing: false,
-              beforeReport: data.beforeReport || item.beforeReport,
-              afterReport: data.afterReport,
-              processedBlob: outBlob,
-              processedUrl: outUrl,
-              processedFilename: data.filename,
-              error: null,
-            };
+            if (mode === "clean") {
+              if (item.cleanUrl) URL.revokeObjectURL(item.cleanUrl);
+              return {
+                ...item,
+                isCleaning: false,
+                beforeReport: data.beforeReport || item.beforeReport,
+                cleanReport: data.afterReport,
+                cleanBlob: outBlob,
+                cleanUrl: outUrl,
+                cleanFilename: data.filename,
+                error: null,
+              };
+            } else {
+              if (item.injectedUrl) URL.revokeObjectURL(item.injectedUrl);
+              return {
+                ...item,
+                isInjecting: false,
+                beforeReport: data.beforeReport || item.beforeReport,
+                injectedReport: data.afterReport,
+                injectedBlob: outBlob,
+                injectedUrl: outUrl,
+                injectedFilename: data.filename,
+                error: null,
+              };
+            }
           })
         );
-        setPreviewStageMode("after");
+
+        return { blob: outBlob, filename: data.filename };
       } catch (err) {
         const msg =
-          err instanceof Error ? err.message : "Failed to sanitize file.";
+          err instanceof Error ? err.message : "Failed to process file.";
         setQueue((prev) =>
           prev.map((item) =>
             item.id === asset.id
-              ? { ...item, isProcessing: false, error: msg }
+              ? {
+                  ...item,
+                  isCleaning: mode === "clean" ? false : item.isCleaning,
+                  isInjecting: mode === "inject" ? false : item.isInjecting,
+                  error: msg,
+                }
               : item
           )
         );
+        return null;
       }
     },
     []
   );
 
-  const handleProcessActive = () => {
-    if (!activeAsset) return;
-    void processSingleAsset(activeAsset, options);
-  };
-
-  const handleProcessAll = async () => {
-    for (const item of queue) {
-      await processSingleAsset(item, options);
-    }
-  };
-
-  const handleDownloadAsset = (asset: QueuedAsset) => {
-    if (!asset.processedUrl || !asset.processedFilename) return;
-    const link = document.createElement("a");
-    link.href = asset.processedUrl;
-    link.download = asset.processedFilename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleDownloadBatchZip = async () => {
-    const completed = queue.filter(
-      (q) => q.processedBlob && q.processedFilename
-    );
-    if (completed.length === 0) return;
-
-    const zip = new JSZip();
-    const usedNames = new Set<string>();
-
-    for (const item of completed) {
-      let name = item.processedFilename!;
-      if (usedNames.has(name)) {
-        const dot = name.lastIndexOf(".");
-        name =
-          dot > 0
-            ? `${name.slice(0, dot)}_${usedNames.size}${name.slice(dot)}`
-            : `${name}_${usedNames.size}`;
+  const downloadZipFromEntries = useCallback(
+    async (
+      entries: Array<{ blob: Blob; filename: string }>,
+      zipName: string
+    ) => {
+      if (entries.length === 0) return;
+      const zip = new JSZip();
+      const usedNames = new Set<string>();
+      for (const entry of entries) {
+        let name = entry.filename;
+        if (usedNames.has(name)) {
+          const dot = name.lastIndexOf(".");
+          name =
+            dot > 0
+              ? `${name.slice(0, dot)}_${usedNames.size}${name.slice(dot)}`
+              : `${name}_${usedNames.size}`;
+        }
+        usedNames.add(name);
+        zip.file(name, entry.blob);
       }
-      usedNames.add(name);
-      zip.file(name, item.processedBlob!);
-    }
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      triggerDownload(url, zipName);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    },
+    []
+  );
 
-    const zipBlob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `DCIM_Camera_Batch_${completed.length}_Files.zip`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  const handleCleanDownloadActive = async (asset: QueuedAsset) => {
+    const res = await processAsset(asset, "clean", options);
+    if (res) {
+      const url = URL.createObjectURL(res.blob);
+      triggerDownload(url, res.filename);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+  };
+
+  const handleCleanDownloadAll = async () => {
+    const entries: Array<{ blob: Blob; filename: string }> = [];
+    for (const item of queue) {
+      const res = await processAsset(item, "clean", options);
+      if (res) entries.push(res);
+    }
+    if (entries.length === 1) {
+      const url = URL.createObjectURL(entries[0].blob);
+      triggerDownload(url, entries[0].filename);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } else if (entries.length > 1) {
+      await downloadZipFromEntries(
+        entries,
+        `Clean_Files_${entries.length}.zip`
+      );
+    }
+  };
+
+  const handleInjectAndDownloadActive = async (asset: QueuedAsset) => {
+    const res = await processAsset(asset, "inject", options);
+    if (res) {
+      const url = URL.createObjectURL(res.blob);
+      triggerDownload(url, res.filename);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+  };
+
+  const handleInjectAndDownloadAll = async () => {
+    const entries: Array<{ blob: Blob; filename: string }> = [];
+    for (const item of queue) {
+      const res = await processAsset(item, "inject", options);
+      if (res) entries.push(res);
+    }
+    if (entries.length === 1) {
+      const url = URL.createObjectURL(entries[0].blob);
+      triggerDownload(url, entries[0].filename);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } else if (entries.length > 1) {
+      await downloadZipFromEntries(
+        entries,
+        `DCIM_Injected_Batch_${entries.length}_Files.zip`
+      );
+    }
+  };
+
+  const handleDownloadAllCleanZip = async () => {
+    const entries = queue
+      .filter((q) => q.cleanBlob && q.cleanFilename)
+      .map((q) => ({ blob: q.cleanBlob!, filename: q.cleanFilename! }));
+    await downloadZipFromEntries(entries, `Clean_Files_${entries.length}.zip`);
+  };
+
+  const handleDownloadAllInjectedZip = async () => {
+    const entries = queue
+      .filter((q) => q.injectedBlob && q.injectedFilename)
+      .map((q) => ({ blob: q.injectedBlob!, filename: q.injectedFilename! }));
+    await downloadZipFromEntries(
+      entries,
+      `DCIM_Injected_Batch_${entries.length}_Files.zip`
+    );
   };
 
   const handleRemoveAsset = (id: string) => {
     setQueue((prev) => {
       const target = prev.find((i) => i.id === id);
-      if (target) {
-        URL.revokeObjectURL(target.previewUrl);
-        if (target.processedUrl) URL.revokeObjectURL(target.processedUrl);
-      }
+      if (target) revokeAssetUrls(target);
       const next = prev.filter((i) => i.id !== id);
       if (activeId === id) {
         setActiveId(next[0]?.id ?? null);
+      }
+      if (next.length === 0) {
+        setCurrentStep(1);
       }
       return next;
     });
   };
 
   const handleClearAll = () => {
-    for (const item of queue) {
-      URL.revokeObjectURL(item.previewUrl);
-      if (item.processedUrl) URL.revokeObjectURL(item.processedUrl);
-    }
+    for (const item of queue) revokeAssetUrls(item);
     setQueue([]);
     setActiveId(null);
     setGlobalError(null);
+    setCurrentStep(1);
   };
 
-  // Telemetry readout for Viewfinder HUD
-  const selectedProfile = getCameraProfile(options.profileId);
-  const selectedLens = getLensForProfile(selectedProfile, options.lensId);
-  const hudFocal = options.focalLengthMm ?? selectedLens.defaultFocalMm;
-  const hudEquiv = compute35mmEquivalent(hudFocal, selectedProfile);
-  const hudAperture = options.fNumber ?? selectedLens.defaultFNumber;
-  const hudShutter = options.shutterSpeed || "1/250";
-  const hudIso = options.iso ?? selectedProfile.baseIso;
-
-  const processedCount = queue.filter((q) => Boolean(q.processedUrl)).length;
-  const unprocessedCount = queue.length - processedCount;
-  const anyProcessing = queue.some((q) => q.isProcessing);
-
-  const showingProcessed =
-    Boolean(activeAsset?.processedUrl) && previewStageMode === "after";
-  const stageMediaUrl = showingProcessed
-    ? activeAsset?.processedUrl
-    : activeAsset?.previewUrl;
+  const modalAfterReport = modalAsset
+    ? currentStep === 3
+      ? modalAsset.injectedReport ?? modalAsset.cleanReport
+      : modalAsset.cleanReport ?? modalAsset.injectedReport
+    : null;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0a0b0e] text-[#f3f5f9]">
@@ -421,46 +510,28 @@ export default function HomePage() {
                   EXIF<span className="text-amber-400">{"//"}</span>FORGE
                 </span>
                 <span className="hidden sm:inline-block rounded border border-[#262c3a] bg-[#14171f] px-2 py-0.5 font-mono text-[10px] text-[#9aa3b5]">
-                  OPTICAL TELEMETRY BENCH
+                  3-STEP METADATA STUDIO
                 </span>
               </div>
               <p className="text-[11px] text-[#7c8599]">
-                Strip C2PA, JUMBF, XMP &amp; diffusion signatures · Inject
-                authentic camera EXIF
+                Choose files · Inspect &amp; Clean Download · Inject camera
+                telemetry
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleLoadSample("comfyui")}
-              disabled={loadingSample !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#282e3d] bg-[#14171f] px-3 py-1.5 text-xs font-medium text-[#d0d7e6] hover:border-amber-500/50 hover:text-amber-200 transition-colors cursor-pointer"
-            >
-              {loadingSample === "comfyui" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
-              ) : (
-                <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-              )}
-              Try ComfyUI + Flux Sample
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleLoadSample("c2pa")}
-              disabled={loadingSample !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#282e3d] bg-[#14171f] px-3 py-1.5 text-xs font-medium text-[#d0d7e6] hover:border-amber-500/50 hover:text-amber-200 transition-colors cursor-pointer"
-            >
-              {loadingSample === "c2pa" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
-              ) : (
-                <ShieldAlert className="h-3.5 w-3.5 text-red-400" />
-              )}
-              Try OpenAI C2PA Sample
-            </button>
-
-            <div className="hidden md:inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1.5 font-mono text-[11px] text-emerald-300">
+          <div className="flex items-center gap-2">
+            {queue.length > 0 && (
+              <button
+                type="button"
+                onClick={handleClearAll}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#282e3d] bg-[#14171f] px-3 py-1.5 text-xs font-medium text-[#d0d7e6] hover:border-red-500/45 hover:text-red-200 transition-colors cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                New Session
+              </button>
+            )}
+            <div className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1.5 font-mono text-[11px] text-emerald-300">
               <Lock className="h-3 w-3" />
               Zero-Retention RAM
             </div>
@@ -468,560 +539,111 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* MAIN STUDIO WORKBENCH */}
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*,video/*,.pdf,.doc,.docx,.txt,.rtf,.epub,.odt,.ods,.odp,.ppt,.pptx,.xls,.xlsx,.csv,.md,.html,.xml,.json"
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files?.length) {
-              addFilesToQueue(e.target.files);
-              e.target.value = "";
+      {/* MAIN 3-STEP WORKSPACE */}
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 space-y-6">
+        <StepIndicator
+          currentStep={currentStep}
+          hasFiles={queue.length > 0}
+          uploadMode={uploadMode}
+          fileCount={queue.length}
+          onSelectStep={(step) => {
+            if (step === 1 || queue.length > 0) {
+              setCurrentStep(step);
             }
           }}
         />
 
         {globalError && (
-          <div className="mb-4 flex items-center justify-between rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+          <div className="flex items-center justify-between rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-xs text-red-200">
             <span>{globalError}</span>
             <button
               type="button"
               onClick={() => setGlobalError(null)}
-              className="font-mono text-red-300 hover:text-white ml-4"
+              className="font-mono text-red-300 hover:text-white ml-4 cursor-pointer"
             >
               DISMISS
             </button>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* LEFT STAGE: UPLOAD / QUEUE + VIEWFINDER + FORENSIC INSPECTOR */}
-          <div className="lg:col-span-7 xl:col-span-8 space-y-5">
-            {queue.length === 0 ? (
-              /* INITIAL FULL-STAGE DROPZONE */
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setIsDragOver(true);
-                }}
-                onDragLeave={() => setIsDragOver(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setIsDragOver(false);
-                  if (e.dataTransfer.files?.length) {
-                    addFilesToQueue(e.dataTransfer.files);
-                  }
-                }}
-                onClick={() => fileInputRef.current?.click()}
-                className={`group relative cursor-pointer rounded-2xl border-2 border-dashed p-10 sm:p-14 text-center transition-all ${
-                  isDragOver
-                    ? "border-amber-400 bg-amber-500/10"
-                    : "border-[#282e3d] bg-[#111318] hover:border-amber-500/50 hover:bg-[#14171f]"
-                }`}
-              >
-                <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-[#2c3344] bg-[#171b24] text-amber-400 group-hover:scale-105 group-hover:border-amber-500/50 transition-all">
-                  <Upload className="h-7 w-7" />
-                </div>
+        {currentStep === 1 && (
+          <StepOneUpload
+            uploadMode={uploadMode}
+            onChangeMode={handleChangeMode}
+            queue={queue}
+            onAddFiles={addFilesToQueue}
+            onRemoveFile={handleRemoveAsset}
+            onClearAll={handleClearAll}
+            onLoadSample={(variant) => void handleLoadSample(variant)}
+            loadingSample={loadingSample}
+            onContinueToInspect={() => {
+              if (queue.length > 0) setCurrentStep(2);
+            }}
+          />
+        )}
 
-                <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#f3f5f9]">
-                  Drop AI Images, Videos or Documents for Deep Sanitization
-                </h1>
-                <p className="mx-auto mt-2.5 max-w-xl text-sm text-[#9aa3b5]">
-                  Decodes images down to raw uncompressed RGB pixels to destroy
-                  C2PA manifests, ComfyUI node graphs, Stable Diffusion prompts
-                  &amp; XMP tags—then injects hardware-accurate camera EXIF.
-                  Documents (PDF, DOCX, EPUB, TXT…) are scrubbed of author,
-                  creator, producer &amp; provenance metadata too.
-                </p>
+        {currentStep === 2 && activeAsset && (
+          <StepTwoInspect
+            queue={queue}
+            activeAsset={activeAsset}
+            onSelectAsset={(id) => setActiveId(id)}
+            onBackToStepOne={() => setCurrentStep(1)}
+            onOpenFullModal={(asset) => {
+              setInspectModalAssetId(asset.id);
+            }}
+            onCleanDownloadActive={(asset) =>
+              void handleCleanDownloadActive(asset)
+            }
+            onCleanDownloadAll={() => void handleCleanDownloadAll()}
+            onDownloadCleanBlob={(asset) => {
+              if (asset.cleanUrl && asset.cleanFilename) {
+                triggerDownload(asset.cleanUrl, asset.cleanFilename);
+              }
+            }}
+            onDownloadAllCleanZip={() => void handleDownloadAllCleanZip()}
+            onProceedToInject={() => setCurrentStep(3)}
+          />
+        )}
 
-                <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-                  <span className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 font-display text-xs font-semibold text-[#0a0b0e] shadow-md">
-                    <Upload className="h-4 w-4" />
-                    Select Photos, Videos or Documents
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleLoadSample("comfyui");
-                    }}
-                    className="inline-flex items-center gap-2 rounded-xl border border-[#2f3646] bg-[#181c26] px-4 py-2.5 text-xs font-medium text-[#e2e7f1] hover:border-amber-500/50 transition-colors"
-                  >
-                    <Sparkles className="h-4 w-4 text-amber-400" />
-                    Load Live AI Sample Image
-                  </button>
-                </div>
-
-                {/* Supported Signatures Strip */}
-                <div className="mt-10 pt-6 border-t border-[#1e2330] grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
-                  {[
-                    {
-                      title: "C2PA & JUMBF",
-                      desc: "OpenAI DALL·E, GPT-4o, Sora, Firefly & SynthID",
-                    },
-                    {
-                      title: "Diffusion Chunks",
-                      desc: "ComfyUI workflows, A1111, Forge & Flux tEXt/zTXt",
-                    },
-                    {
-                      title: "XMP & IPTC",
-                      desc: "Purges trainedAlgorithmicMedia & CreatorTool URIs",
-                    },
-                    {
-                      title: "35+ Optical Tags",
-                      desc: "APEX shutter/aperture, LensSpec, RTC sub-sec & GPS",
-                    },
-                    {
-                      title: "Document Provenance",
-                      desc: "Strips PDF/XMP, Office docProps & EPUB author/creator metadata",
-                    },
-                    {
-                      title: "Byte-Level Inspector",
-                      desc: "Reads real EXIF IFDs, XMP, IPTC, ICC & JUMBF — before and after",
-                    },
-                  ].map((item) => (
-                    <div
-                      key={item.title}
-                      className="rounded-lg border border-[#202532] bg-[#0d0f14] p-3"
-                    >
-                      <div className="font-mono text-xs font-semibold text-amber-300">
-                        {item.title}
-                      </div>
-                      <div className="mt-1 text-[11px] text-[#7c8599] leading-relaxed">
-                        {item.desc}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              /* ACTIVE ASSET QUEUE + OPTICAL VIEWFINDER */
-              <>
-                {/* Queue Strip */}
-                <div className="rounded-xl border border-[#232834] bg-[#111318] p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
-                    <div className="flex items-center gap-2 text-xs font-medium text-[#9aa3b5]">
-                      <span>Asset Queue ({queue.length})</span>
-                      {processedCount > 0 && (
-                        <span className="rounded bg-emerald-500/15 px-2 py-0.5 font-mono text-[11px] text-emerald-300">
-                          {processedCount} sanitized
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {processedCount > 1 && (
-                        <button
-                          type="button"
-                          onClick={handleDownloadBatchZip}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-1 text-xs font-medium text-emerald-200 hover:bg-emerald-500/30 transition-colors cursor-pointer"
-                        >
-                          <Archive className="h-3.5 w-3.5" />
-                          Download ZIP ({processedCount})
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="inline-flex items-center gap-1 rounded-lg border border-[#2b3242] bg-[#171a22] px-2.5 py-1 text-xs font-medium text-[#d5dce9] hover:border-amber-500/50 transition-colors cursor-pointer"
-                      >
-                        <Plus className="h-3.5 w-3.5 text-amber-400" />
-                        Add Files
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleClearAll}
-                        className="inline-flex items-center gap-1 rounded-lg border border-[#2b3242] bg-[#171a22] px-2.5 py-1 text-xs text-[#9aa3b5] hover:text-red-300 transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {queue.map((item) => {
-                      const isSelected = activeAsset?.id === item.id;
-                      const aiDetected =
-                        item.beforeReport &&
-                        item.beforeReport.aiFindings.some(
-                          (f) =>
-                            f.severity === "critical" ||
-                            f.severity === "warning"
-                        );
-                      return (
-                        <div
-                          key={item.id}
-                          onClick={() => setActiveId(item.id)}
-                          className={`group relative flex items-center gap-2.5 rounded-lg border px-2.5 py-2 min-w-[205px] max-w-[240px] cursor-pointer transition-all shrink-0 ${
-                            isSelected
-                              ? "border-amber-500/70 bg-amber-500/10"
-                              : "border-[#232834] bg-[#161920] hover:border-[#343c4e]"
-                          }`}
-                        >
-                          <div className="h-10 w-10 rounded overflow-hidden bg-[#0b0d12] flex items-center justify-center shrink-0 border border-[#252a37]">
-                            {item.mediaType === "image" ? (
-                              /* eslint-disable-next-line @next/next/no-img-element */
-                              <img
-                                src={item.processedUrl || item.previewUrl}
-                                alt={item.file.name}
-                                className="h-full w-full object-cover"
-                              />
-                            ) : item.mediaType === "video" ? (
-                              <FileVideo className="h-5 w-5 text-amber-400" />
-                            ) : (
-                              <FileText className="h-5 w-5 text-amber-400" />
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-medium text-[#f3f5f9]">
-                              {item.processedFilename || item.file.name}
-                            </div>
-                            <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px]">
-                              {item.isProcessing ? (
-                                <span className="text-amber-300 flex items-center gap-1">
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                  Processing…
-                                </span>
-                              ) : item.afterReport ? (
-                                <span className="text-emerald-400 flex items-center gap-1">
-                                  <CheckCircle2 className="h-3 w-3" />
-                                  {item.mediaType === "document"
-                                    ? "Metadata Scrubbed"
-                                    : "Camera Verified"}
-                                </span>
-                              ) : aiDetected ? (
-                                <span className="text-red-400 flex items-center gap-1">
-                                  <ShieldAlert className="h-3 w-3" />
-                                  {item.beforeReport?.aiFindings.length} AI Flags
-                                </span>
-                              ) : (
-                                <span className="text-[#7c8599]">
-                                  {formatBytes(item.file.size)}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openInspector(item);
-                            }}
-                            className="opacity-60 hover:opacity-100 text-[#7c8599] hover:text-amber-300 p-1"
-                            title="Inspect all metadata"
-                            aria-label={`Inspect metadata of ${item.file.name}`}
-                          >
-                            <FileSearch className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRemoveAsset(item.id);
-                            }}
-                            className="opacity-60 hover:opacity-100 text-[#7c8599] hover:text-red-400 p-1"
-                            title="Remove file"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* CAMERA VIEWFINDER STAGE */}
-                {activeAsset && (
-                  <div
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setIsDragOver(true);
-                    }}
-                    onDragLeave={() => setIsDragOver(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setIsDragOver(false);
-                      if (e.dataTransfer.files?.length) {
-                        addFilesToQueue(e.dataTransfer.files);
-                      }
-                    }}
-                    className={`rounded-xl border overflow-hidden bg-[#0d0f14] transition-colors ${
-                      isDragOver ? "border-amber-400" : "border-[#232834]"
-                    }`}
-                  >
-                    {/* Viewfinder Top Bezel */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1d222d] bg-[#111318] px-4 py-2.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        {activeAsset.mediaType === "image" ? (
-                          <FileImage className="h-4 w-4 text-amber-400 shrink-0" />
-                        ) : activeAsset.mediaType === "video" ? (
-                          <FileVideo className="h-4 w-4 text-amber-400 shrink-0" />
-                        ) : (
-                          <FileText className="h-4 w-4 text-amber-400 shrink-0" />
-                        )}
-                        <span className="font-mono text-xs font-medium text-[#f3f5f9] truncate">
-                          {showingProcessed && activeAsset.processedFilename
-                            ? activeAsset.processedFilename
-                            : activeAsset.file.name}
-                        </span>
-                        {activeAsset.afterReport ? (
-                          <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
-                            <ShieldCheck className="h-3 w-3" />
-                            {activeAsset.mediaType === "document"
-                              ? "METADATA SCRUBBED"
-                              : "CLEANED & TAGGED"}
-                          </span>
-                        ) : (
-                          activeAsset.beforeReport?.authenticityStatus ===
-                            "ai-detected" && (
-                            <span className="inline-flex items-center gap-1 rounded bg-red-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-red-300">
-                              <ShieldAlert className="h-3 w-3" />
-                              AI PROVENANCE PRESENT
-                            </span>
-                          )
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openInspector(activeAsset)}
-                          title="Inspect all embedded metadata — EXIF, XMP, C2PA, chunks &amp; tag dump"
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/45 bg-amber-500/10 px-3 py-1.5 font-display text-xs font-semibold text-amber-200 hover:bg-amber-500/20 hover:text-amber-100 transition-colors cursor-pointer"
-                        >
-                          {activeAsset.isInspecting ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <FileSearch className="h-3.5 w-3.5" />
-                          )}
-                          Inspect Metadata
-                        </button>
-
-                        {activeAsset.processedUrl && (
-                          <div className="inline-flex rounded-lg border border-[#262c3a] bg-[#0b0d12] p-0.5 text-[11px]">
-                            <button
-                              type="button"
-                              onClick={() => setPreviewStageMode("before")}
-                              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium ${
-                                previewStageMode === "before"
-                                  ? "bg-zinc-800 text-white"
-                                  : "text-[#8e97aa]"
-                              }`}
-                            >
-                              <Eye className="h-3 w-3" />
-                              Source
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPreviewStageMode("after")}
-                              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium ${
-                                previewStageMode === "after"
-                                  ? "bg-amber-500/25 text-amber-200"
-                                  : "text-[#8e97aa]"
-                              }`}
-                            >
-                              Camera Output
-                            </button>
-                          </div>
-                        )}
-
-                        {activeAsset.processedUrl && (
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadAsset(activeAsset)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 font-display text-xs font-semibold text-[#07110c] hover:bg-emerald-400 transition-colors cursor-pointer"
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                            Download {activeAsset.processedFilename}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Optical Frame Area */}
-                    <div className="relative flex min-h-[290px] max-h-[460px] items-center justify-center bg-[#08090c] p-4">
-                      {/* Subtle Viewfinder Corner Brackets */}
-                      <div className="pointer-events-none absolute top-4 left-4 h-4 w-4 border-t border-l border-amber-400/35" />
-                      <div className="pointer-events-none absolute top-4 right-4 h-4 w-4 border-t border-r border-amber-400/35" />
-                      <div className="pointer-events-none absolute bottom-4 left-4 h-4 w-4 border-b border-l border-amber-400/35" />
-                      <div className="pointer-events-none absolute bottom-4 right-4 h-4 w-4 border-b border-r border-amber-400/35" />
-
-                      {activeAsset.mediaType === "image" && stageMediaUrl ? (
-                        /* eslint-disable-next-line @next/next/no-img-element */
-                        <img
-                          src={stageMediaUrl}
-                          alt={activeAsset.file.name}
-                          className="max-h-[420px] w-auto rounded object-contain shadow-2xl"
-                        />
-                      ) : activeAsset.mediaType === "video" && stageMediaUrl ? (
-                        <video
-                          key={stageMediaUrl}
-                          src={stageMediaUrl}
-                          controls
-                          muted
-                          className="max-h-[420px] w-auto rounded object-contain shadow-2xl"
-                        />
-                      ) : activeAsset.mediaType === "document" ? (
-                        <div className="flex max-h-[420px] w-full max-w-md flex-col items-center gap-4 rounded-xl border border-[#232834] bg-[#0f1117] p-8 text-center shadow-2xl">
-                          <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-[#2c3344] bg-[#171b24] text-amber-400">
-                            <FileText className="h-9 w-9" />
-                          </div>
-                          <div>
-                            <div className="truncate font-mono text-sm font-medium text-[#f3f5f9]">
-                              {showingProcessed && activeAsset.processedFilename
-                                ? activeAsset.processedFilename
-                                : activeAsset.file.name}
-                            </div>
-                            <div className="mt-1 font-mono text-[11px] text-[#7c8599]">
-                              {activeAsset.beforeReport?.containerFormat ||
-                                activeAsset.afterReport?.containerFormat ||
-                                "Document"}{" "}
-                              · {formatBytes(activeAsset.file.size)}
-                            </div>
-                          </div>
-                          <div className="w-full rounded-lg border border-[#232834] bg-[#0a0b0e] px-3 py-2 text-left font-mono text-[11px] text-[#9aa3b5]">
-                            {activeAsset.afterReport ? (
-                              <span className="text-emerald-300">
-                                ✓ Metadata scrubbed —{" "}
-                                {activeAsset.afterReport.tags.length} properties
-                                remaining
-                              </span>
-                            ) : activeAsset.beforeReport &&
-                              activeAsset.beforeReport.tags.length > 0 ? (
-                              <span className="text-amber-300">
-                                {activeAsset.beforeReport.tags.length} embedded
-                                metadata properties detected
-                              </span>
-                            ) : (
-                              <span>No extractable metadata detected</span>
-                            )}
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {activeAsset.isProcessing && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#08090c]/80 backdrop-blur-xs">
-                          <Loader2 className="h-9 w-9 animate-spin text-amber-400 mb-3" />
-                          {activeAsset.mediaType === "document" ? (
-                            <>
-                              <p className="font-display text-sm font-semibold text-[#f3f5f9]">
-                                Scrubbing Document Metadata…
-                              </p>
-                              <p className="mt-1 font-mono text-xs text-amber-300/80">
-                                Stripping author, creator &amp; provenance tags
-                              </p>
-                            </>
-                          ) : (
-                            <>
-                              <p className="font-display text-sm font-semibold text-[#f3f5f9]">
-                                Re-encoding Raw Pixels &amp; Embedding Camera
-                                IFDs…
-                              </p>
-                              <p className="mt-1 font-mono text-xs text-amber-300/80">
-                                {selectedProfile.make} · {selectedProfile.model}
-                              </p>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Camera Viewfinder OLED Bottom Readout Strip */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#1d222d] bg-[#0e1016] px-4 py-2.5 font-mono text-xs">
-                      <div className="flex flex-wrap items-center gap-3 text-amber-300">
-                        <span className="font-semibold text-[#f3f5f9]">
-                          {activeAsset.mediaType === "document" ? (
-                            "Document Sanitization"
-                          ) : showingProcessed &&
-                            activeAsset.afterReport?.exifSummary.model ? (
-                            `${activeAsset.afterReport.exifSummary.make} ${activeAsset.afterReport.exifSummary.model}`
-                          ) : (
-                            `${selectedProfile.make} · ${selectedProfile.shortName}`
-                          )}
-                        </span>
-                        {activeAsset.mediaType === "image" && (
-                          <>
-                            <span className="text-[#3a4254]">|</span>
-                            <span>{hudShutter}s</span>
-                            <span>f/{hudAperture}</span>
-                            <span>ISO {hudIso}</span>
-                            <span>
-                              {hudFocal}mm ({hudEquiv}mm)
-                            </span>
-                          </>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2 text-[11px] text-[#7c8599]">
-                        {activeAsset.afterReport ? (
-                          <span>
-                            {activeAsset.afterReport.containerFormat} ·{" "}
-                            {formatBytes(activeAsset.afterReport.byteSize)}
-                          </span>
-                        ) : activeAsset.beforeReport ? (
-                          <span>
-                            {activeAsset.beforeReport.containerFormat} ·{" "}
-                            {formatBytes(activeAsset.beforeReport.byteSize)}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    {activeAsset.error && (
-                      <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs text-red-200">
-                        {activeAsset.error}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* FORENSIC METADATA INSPECTOR */}
-                {activeAsset && (
-                  <ForensicInspector
-                    beforeReport={activeAsset.beforeReport}
-                    afterReport={activeAsset.afterReport}
-                    isInspecting={activeAsset.isInspecting}
-                    error={activeAsset.error}
-                    onOpenInspector={() => openInspector(activeAsset)}
-                  />
-                )}
-              </>
-            )}
-          </div>
-
-          {/* RIGHT CONTROL BAY: CAMERA & SANITIZATION TELEMETRY DECK */}
-          <aside className="lg:col-span-5 xl:col-span-4 lg:sticky lg:top-20">
-            <CameraControlDeck
-              options={options}
-              onChange={setOptions}
-              onProcessActive={handleProcessActive}
-              onProcessAll={handleProcessAll}
-              isProcessing={anyProcessing}
-              hasActiveFile={Boolean(activeAsset)}
-              activeMediaType={activeAsset?.mediaType ?? null}
-              queueCount={queue.length}
-              unprocessedCount={unprocessedCount}
-            />
-          </aside>
-        </div>
+        {currentStep === 3 && activeAsset && (
+          <StepThreeInject
+            queue={queue}
+            activeAsset={activeAsset}
+            options={options}
+            onChangeOptions={setOptions}
+            onSelectAsset={(id) => setActiveId(id)}
+            onBackToInspect={() => setCurrentStep(2)}
+            onInjectAndDownloadActive={(asset) =>
+              void handleInjectAndDownloadActive(asset)
+            }
+            onInjectAndDownloadAll={() => void handleInjectAndDownloadAll()}
+            onDownloadInjectedBlob={(asset) => {
+              if (asset.injectedUrl && asset.injectedFilename) {
+                triggerDownload(asset.injectedUrl, asset.injectedFilename);
+              }
+            }}
+            onDownloadAllInjectedZip={() =>
+              void handleDownloadAllInjectedZip()
+            }
+            onOpenFullModal={(asset) => {
+              setInspectModalAssetId(asset.id);
+            }}
+          />
+        )}
       </main>
 
       {/* FULL METADATA INSPECTOR MODAL */}
-      {activeAsset && (
+      {modalAsset && (
         <MetadataInspectorModal
-          open={inspectModalOpen}
-          onClose={() => setInspectModalOpen(false)}
-          filename={activeAsset.file.name}
-          mediaType={activeAsset.mediaType}
-          beforeReport={activeAsset.beforeReport}
-          afterReport={activeAsset.afterReport}
-          isInspecting={activeAsset.isInspecting}
-          error={activeAsset.error}
-          onRescan={() => inspectQueuedFile(activeAsset.id, activeAsset.file)}
+          open={Boolean(inspectModalAssetId)}
+          onClose={() => setInspectModalAssetId(null)}
+          filename={modalAsset.file.name}
+          mediaType={modalAsset.mediaType}
+          beforeReport={modalAsset.beforeReport}
+          afterReport={modalAfterReport}
+          isInspecting={modalAsset.isInspecting}
+          error={modalAsset.error}
+          onRescan={() => inspectQueuedFile(modalAsset.id, modalAsset.file)}
         />
       )}
     </div>
