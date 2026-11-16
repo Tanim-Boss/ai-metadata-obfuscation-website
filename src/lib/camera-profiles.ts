@@ -57,7 +57,16 @@ export interface GpsPreset {
   timezoneOffset: string;
 }
 
+export interface DocumentMetadataOptions {
+  title?: string;
+  author?: string;
+  subject?: string;
+  keywords?: string;
+  creator?: string;
+}
+
 export interface TelemetryOptions {
+  mode?: "clean" | "inject";
   profileId: string;
   lensId?: string;
   focalLengthMm?: number;
@@ -85,6 +94,7 @@ export interface TelemetryOptions {
   jpegQuality?: number;
   renameToCameraConvention?: boolean;
   addSensorGrain?: boolean;
+  documentMetadata?: DocumentMetadataOptions;
 }
 
 export const SHUTTER_SPEED_OPTIONS = [

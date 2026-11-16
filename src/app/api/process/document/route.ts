@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { processDocumentBuffer } from "@/lib/document-processor";
+import type { TelemetryOptions } from "@/lib/camera-profiles";
 import { db } from "@/db";
 import { processingJobs } from "@/db/schema";
 
@@ -29,9 +30,20 @@ export async function POST(request: Request) {
       );
     }
 
+    let options: Partial<TelemetryOptions> | undefined;
+    const rawOptions = formData.get("options");
+    if (typeof rawOptions === "string" && rawOptions.trim()) {
+      try {
+        options = JSON.parse(rawOptions) as Partial<TelemetryOptions>;
+      } catch {
+        // Ignore invalid JSON options
+      }
+    }
+
     const result = await processDocumentBuffer(
       Buffer.from(arrayBuf),
-      file.name || "document.pdf"
+      file.name || "document.pdf",
+      options
     );
 
     if (db) {

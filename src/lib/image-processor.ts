@@ -149,17 +149,21 @@ export async function processImageBuffer(
   options: TelemetryOptions
 ): Promise<ProcessedImageResult> {
   const beforeReport = await inspectMediaBuffer(inputBuffer, originalFilename);
+  const isCleanOnly = options.mode === "clean";
 
   const profile = getCameraProfile(options.profileId);
   const lens = getLensForProfile(profile, options.lensId);
 
   // Resolve target container format
+  const effectiveFormat = isCleanOnly
+    ? options.outputFormat || "keep"
+    : options.outputFormat || "jpeg";
   let targetFormat: "jpeg" | "png" | "webp" = "jpeg";
-  if (options.outputFormat === "png") {
+  if (effectiveFormat === "png") {
     targetFormat = "png";
-  } else if (options.outputFormat === "webp") {
+  } else if (effectiveFormat === "webp") {
     targetFormat = "webp";
-  } else if (options.outputFormat === "keep") {
+  } else if (effectiveFormat === "keep") {
     if (beforeReport.containerFormat === "PNG") targetFormat = "png";
     else if (beforeReport.containerFormat === "WEBP") targetFormat = "webp";
     else targetFormat = "jpeg";
@@ -182,8 +186,61 @@ export async function processImageBuffer(
   const iso =
     options.iso && options.iso > 0 ? Math.round(options.iso) : profile.baseIso;
 
-  if (options.addSensorGrain) {
+  if (!isCleanOnly && options.addSensorGrain) {
     applySubtleSensorGrain(rawPixels, info.channels, iso);
+  }
+
+  // Clean-only path: re-encode raw pixels without injecting any EXIF / XMP / C2PA
+  if (isCleanOnly) {
+    const rawSource = sharp(rawPixels, {
+      raw: {
+        width: info.width,
+        height: info.height,
+        channels: info.channels,
+      },
+    });
+    const quality = Math.min(
+      100,
+      Math.max(80, Math.round(options.jpegQuality ?? 96))
+    );
+
+    let outputBuffer: Buffer;
+    let mimeType: string;
+    let ext: string;
+
+    if (targetFormat === "png") {
+      outputBuffer = await rawSource.png({ compressionLevel: 8 }).toBuffer();
+      mimeType = "image/png";
+      ext = "png";
+    } else if (targetFormat === "webp") {
+      outputBuffer = await rawSource.webp({ quality }).toBuffer();
+      mimeType = "image/webp";
+      ext = "webp";
+    } else {
+      outputBuffer = await rawSource
+        .jpeg({
+          quality,
+          chromaSubsampling: quality >= 95 ? "4:4:4" : "4:2:2",
+        })
+        .toBuffer();
+      mimeType = "image/jpeg";
+      ext = "jpg";
+    }
+
+    const baseStem =
+      (originalFilename.replace(/\.[^.]+$/, "") || "image")
+        .replace(/[^\w.-]+/g, "_")
+        .slice(0, 80);
+    const outputFilename = `clean_${baseStem}.${ext}`;
+    const afterReport = await inspectMediaBuffer(outputBuffer, outputFilename);
+
+    return {
+      outputBuffer,
+      outputFilename,
+      mimeType,
+      beforeReport,
+      afterReport,
+    };
   }
 
   // 2. Compute internally coherent optical & exposure values

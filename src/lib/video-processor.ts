@@ -283,6 +283,7 @@ export async function processVideoBuffer(
   options: TelemetryOptions
 ): Promise<ProcessedVideoResult> {
   const beforeReport = await inspectMediaBuffer(inputBuffer, originalFilename);
+  const isCleanOnly = options.mode === "clean";
   const profile = getCameraProfile(options.profileId);
 
   const topBoxes = readChildBoxes(inputBuffer);
@@ -293,7 +294,9 @@ export async function processVideoBuffer(
   }
 
   let captureDate = new Date();
-  if (options.captureTimestamp) {
+  if (isCleanOnly) {
+    captureDate = new Date(Date.UTC(2000, 0, 1, 0, 0, 0));
+  } else if (options.captureTimestamp) {
     const parsed = new Date(options.captureTimestamp);
     if (!Number.isNaN(parsed.getTime())) captureDate = parsed;
   } else {
@@ -305,22 +308,24 @@ export async function processVideoBuffer(
   let tzOffset = options.timezoneOffset || "+00:00";
   let iso6709Location: string | undefined;
 
-  if (options.gpsMode === "preset" && options.gpsPresetId) {
-    const preset = GPS_PRESETS.find((g) => g.id === options.gpsPresetId);
-    if (preset) {
-      if (!options.timezoneOffset) tzOffset = preset.timezoneOffset;
-      iso6709Location = formatIso6709(preset.lat, preset.lng, preset.altitudeM);
+  if (!isCleanOnly) {
+    if (options.gpsMode === "preset" && options.gpsPresetId) {
+      const preset = GPS_PRESETS.find((g) => g.id === options.gpsPresetId);
+      if (preset) {
+        if (!options.timezoneOffset) tzOffset = preset.timezoneOffset;
+        iso6709Location = formatIso6709(preset.lat, preset.lng, preset.altitudeM);
+      }
+    } else if (
+      options.gpsMode === "custom" &&
+      typeof options.customLat === "number" &&
+      typeof options.customLng === "number"
+    ) {
+      iso6709Location = formatIso6709(
+        options.customLat,
+        options.customLng,
+        options.customAltitudeM ?? 15
+      );
     }
-  } else if (
-    options.gpsMode === "custom" &&
-    typeof options.customLat === "number" &&
-    typeof options.customLng === "number"
-  ) {
-    iso6709Location = formatIso6709(
-      options.customLat,
-      options.customLng,
-      options.customAltitudeM ?? 15
-    );
   }
 
   const macTimestampSec =
@@ -351,6 +356,9 @@ export async function processVideoBuffer(
       iso6709Location,
     ]);
   }
+
+  const videoHandler = isCleanOnly ? "VideoHandler" : profile.videoHandlerName;
+  const audioHandler = isCleanOnly ? "SoundHandler" : profile.audioHandlerName;
 
   // Reconstruct top-level container while tracking exact mdat byte shifts
   const outputChunks: Buffer[] = [];
@@ -399,8 +407,8 @@ export async function processVideoBuffer(
               sanitizeTrak(
                 child.payload,
                 macTimestampSec,
-                profile.videoHandlerName,
-                profile.audioHandlerName
+                videoHandler,
+                audioHandler
               )
             )
           );
@@ -409,9 +417,11 @@ export async function processVideoBuffer(
         }
       }
 
-      // Inject authentic QuickTime mdta + MP4 udta camera telemetry
-      cleanMoovChildren.push(buildQuickTimeMdtaMetaBox(mdtaEntries));
-      cleanMoovChildren.push(buildIsoUdtaBox(udtaEntries));
+      if (!isCleanOnly) {
+        // Inject authentic QuickTime mdta + MP4 udta camera telemetry
+        cleanMoovChildren.push(buildQuickTimeMdtaMetaBox(mdtaEntries));
+        cleanMoovChildren.push(buildIsoUdtaBox(udtaEntries));
+      }
 
       const rebuiltMoov = makeBox("moov", Buffer.concat(cleanMoovChildren));
       outputChunks.push(rebuiltMoov);
@@ -433,12 +443,18 @@ export async function processVideoBuffer(
   const isMov =
     beforeReport.containerFormat === "MOV" ||
     originalFilename.toLowerCase().endsWith(".mov") ||
-    profile.id === "iphone-16-pro";
+    (!isCleanOnly && profile.id === "iphone-16-pro");
   const ext = isMov && originalFilename.toLowerCase().endsWith(".mov") ? "MOV" : "MP4";
   const mimeType = ext === "MOV" ? "video/quicktime" : "video/mp4";
 
   let outputFilename: string;
-  if (options.renameToCameraConvention !== false) {
+  if (isCleanOnly) {
+    const stem =
+      (originalFilename.replace(/\.[^.]+$/, "") || "video")
+        .replace(/[^\w.-]+/g, "_")
+        .slice(0, 80);
+    outputFilename = `clean_${stem}.${ext.toLowerCase()}`;
+  } else if (options.renameToCameraConvention !== false) {
     outputFilename = generateCameraFilename(profile, ext, true, captureDate);
   } else {
     const stem = originalFilename.replace(/\.[^.]+$/, "") || "video";
