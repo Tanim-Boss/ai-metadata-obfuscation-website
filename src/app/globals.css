@@ -43,6 +43,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Ambient darkroom glow behind the workspace chrome. Pure background paint —
+   adds zero layout height, so the studio stays dense. */
+.canvas-glow {
+  background-image: radial-gradient(
+    48rem 18rem at 50% -8rem,
+    rgba(245, 158, 11, 0.1),
+    transparent 72%
+  );
+  background-repeat: no-repeat;
+}
+
+/* Horizontal queue strips: hide the chunky scrollbar on overflow rails. */
+.queue-rail {
+  scrollbar-width: thin;
+  scrollbar-color: #2b3242 transparent;
+}
+
+.queue-rail::-webkit-scrollbar {
+  height: 4px;
+}
+
 /* Subtle darkroom scrollbar */
 ::-webkit-scrollbar {
   width: 7px;
